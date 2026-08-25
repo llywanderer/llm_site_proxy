@@ -1,4 +1,4 @@
-"""Skills 可写元数据：标签库 + skill→tags / category 覆盖。
+"""Skills 可写元数据：标签库 + skill→tags / category 覆盖 + 中文描述。
 
 持久化文件默认 ``{CURSOR_SKILLS_DIR}/.skills-meta.json``，
 可用 ``CURSOR_SKILLS_META_PATH`` 覆盖。与 skills 目录同卷，重启不丢。
@@ -45,6 +45,7 @@ def _empty_doc() -> dict[str, Any]:
         "tags": [dict(t) for t in _DEFAULT_TAGS],
         "skill_tags": {},
         "by_name": {},
+        "descriptions_zh": {},
     }
 
 
@@ -103,11 +104,20 @@ def _load_unlocked() -> dict[str, Any]:
             cid = str(v).strip().lower()
             if name and cid:
                 by_name[name] = cid
+    descriptions_zh: dict[str, str] = {}
+    dz = data.get("descriptions_zh")
+    if isinstance(dz, dict):
+        for k, v in dz.items():
+            name = str(k).strip()
+            text = str(v).strip() if v is not None else ""
+            if name and text:
+                descriptions_zh[name] = text
     return {
         "version": int(data.get("version") or 1),
         "tags": tags,
         "skill_tags": skill_tags,
         "by_name": by_name,
+        "descriptions_zh": descriptions_zh,
     }
 
 
@@ -120,6 +130,7 @@ def _save_unlocked(doc: dict[str, Any]) -> None:
         "tags": doc.get("tags") or [],
         "skill_tags": doc.get("skill_tags") or {},
         "by_name": doc.get("by_name") or {},
+        "descriptions_zh": doc.get("descriptions_zh") or {},
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     tmp.write_text(text, encoding="utf-8")
@@ -312,14 +323,60 @@ def set_skill_category(name: str, category_id: str | None) -> str | None:
         return cid
 
 
+def get_description_zh(name: str) -> str | None:
+    n = (name or "").strip()
+    if not n:
+        return None
+    text = (load_meta().get("descriptions_zh") or {}).get(n)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return None
+
+
+def set_description_zh(name: str, text: str | None) -> str | None:
+    """写入或清除 skill 中文描述。"""
+    with _lock:
+        doc = _load_unlocked()
+        n = (name or "").strip()
+        if not n:
+            raise SkillMetaError("skill name 不能为空", status_code=400)
+        descriptions = dict(doc.get("descriptions_zh") or {})
+        if text is None or not str(text).strip():
+            descriptions.pop(n, None)
+            doc["descriptions_zh"] = descriptions
+            _save_unlocked(doc)
+            return None
+        cleaned = str(text).strip()
+        descriptions[n] = cleaned
+        doc["descriptions_zh"] = descriptions
+        _save_unlocked(doc)
+        return cleaned
+
+
+def clear_description_zh(name: str) -> bool:
+    """删除 skill 时清理中文描述；返回是否曾存在。"""
+    with _lock:
+        doc = _load_unlocked()
+        n = (name or "").strip()
+        descriptions = dict(doc.get("descriptions_zh") or {})
+        existed = n in descriptions
+        if existed:
+            descriptions.pop(n, None)
+            doc["descriptions_zh"] = descriptions
+            _save_unlocked(doc)
+        return existed
+
+
 def patch_skill_meta(
     name: str,
     *,
     tags: list[str] | None = None,
     category: str | None = None,
     clear_category: bool = False,
+    description_zh: str | None = None,
+    clear_description_zh: bool = False,
 ) -> dict[str, Any]:
-    """一次更新 tags 和/或 category 覆盖。"""
+    """一次更新 tags、category 覆盖和/或中文描述。"""
     result: dict[str, Any] = {"name": name}
     if tags is not None:
         result["tags"] = set_skill_tags(name, tags)
@@ -328,4 +385,9 @@ def patch_skill_meta(
         result["category_override"] = None
     elif category is not None:
         result["category_override"] = set_skill_category(name, category)
+    if clear_description_zh:
+        set_description_zh(name, None)
+        result["description_zh"] = None
+    elif description_zh is not None:
+        result["description_zh"] = set_description_zh(name, description_zh)
     return result

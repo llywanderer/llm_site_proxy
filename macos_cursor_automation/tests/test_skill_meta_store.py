@@ -58,6 +58,27 @@ class SkillMetaStoreTests(unittest.TestCase):
             meta_file = skills / ".skills-meta.json"
             self.assertTrue(meta_file.is_file())
 
+    def test_description_zh_roundtrip(self) -> None:
+        from skill_meta_store import (
+            clear_description_zh,
+            get_description_zh,
+            patch_skill_meta,
+            set_description_zh,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            skills = Path(td) / "skills"
+            skills.mkdir()
+            os.environ["CURSOR_SKILLS_DIR"] = str(skills)
+            os.environ.pop("CURSOR_SKILLS_META_PATH", None)
+
+            set_description_zh("remotion-markup", "Remotion 镜头与特效标记最佳实践。")
+            self.assertIn("镜头", get_description_zh("remotion-markup") or "")
+            patch_skill_meta("remotion-markup", description_zh="更新后的中文描述。")
+            self.assertEqual(get_description_zh("remotion-markup"), "更新后的中文描述。")
+            clear_description_zh("remotion-markup")
+            self.assertIsNone(get_description_zh("remotion-markup"))
+
 
 if __name__ == "__main__":
     unittest.main()

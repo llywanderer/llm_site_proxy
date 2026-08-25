@@ -75,6 +75,13 @@ class SkillMetaPatchBody(BaseModel):
     tags: list[str] | None = None
     category: str | None = None
     clear_category: bool = False
+    description_zh: str | None = None
+    clear_description_zh: bool = False
+
+
+class SkillDescriptionZhBody(BaseModel):
+    force: bool = False
+    use_llm: bool | None = None
 
 
 class SkillUsageIngest(BaseModel):
@@ -444,6 +451,17 @@ async def api_skills_patch_meta(name: str, body: SkillMetaPatchBody) -> Any:
     status, payload = await skills_proxy.patch_skill_meta(
         name, body.model_dump(exclude_none=True)
     )
+    if status >= 400:
+        raise HTTPException(status, payload)
+    return payload
+
+
+@app.post("/api/skills/{name}/description-zh")
+async def api_skills_ensure_description_zh(
+    name: str, body: SkillDescriptionZhBody | None = None
+) -> Any:
+    payload_in = body.model_dump(exclude_none=True) if body else {}
+    status, payload = await skills_proxy.ensure_description_zh(name, payload_in)
     if status >= 400:
         raise HTTPException(status, payload)
     return payload

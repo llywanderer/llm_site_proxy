@@ -380,7 +380,7 @@ def enrich_skill_item(
     *,
     frontmatter: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """就地写入分类字段与标签后返回。"""
+    """就地写入分类字段、标签与中文描述后返回。"""
     tax = categorize_skill(str(item.get("name") or ""), frontmatter=frontmatter)
     item.update(tax)
     try:
@@ -397,6 +397,21 @@ def enrich_skill_item(
     else:
         item.setdefault("tags", [])
         item.setdefault("tag_ids", [])
+    try:
+        from skill_description_zh import attach_description_fields
+    except ImportError:
+        try:
+            from .skill_description_zh import attach_description_fields  # type: ignore
+        except ImportError:
+            attach_description_fields = None  # type: ignore
+    if attach_description_fields is not None:
+        attach_description_fields(item)
+    else:
+        item.setdefault("description_zh", "")
+        item.setdefault(
+            "description_display",
+            str(item.get("description") or ""),
+        )
     return item
 
 

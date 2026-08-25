@@ -70,6 +70,9 @@
 - ``CURSOR_SKILLS_DIR``：全局 skills 根目录（默认 ``/root/.cursor/skills``）；``/v1/skills*`` 与用量日志共用。
 - ``CURSOR_SKILLS_ALLOW_REMOTE``：``1`` 时允许 ``git``/``url`` 安装（默认关闭）。
 - ``CURSOR_BRIDGE_LOG_SKILL_USAGE``：chat/messages 结束后记录 skill 使用情况（默认 ``1``；``0`` 关闭）。
+- ``CURSOR_SKILLS_ZH_LLM``：安装/回填时是否 LLM 润色中文描述（默认 ``1``；失败回退模板）。
+- ``CURSOR_SKILLS_ZH_ON_INSTALL``：安装成功后自动生成 ``description_zh``（默认 ``1``）。
+- ``CURSOR_SKILLS_ZH_TIMEOUT``：中文描述 LLM 超时秒数（默认 ``60``）。
 """
 
 from __future__ import annotations
@@ -131,6 +134,7 @@ try:
         patch_skill_meta,
         update_tag,
     )
+    from .skill_description_zh import backfill_descriptions_zh, ensure_description_zh
 except ImportError:
     from cursor_automation import (
         AgentMode,
@@ -170,6 +174,7 @@ except ImportError:
         patch_skill_meta,
         update_tag,
     )
+    from skill_description_zh import backfill_descriptions_zh, ensure_description_zh
 
 try:
     from .image_generation import (
@@ -1387,7 +1392,7 @@ def create_app(
 
     @app.patch("/v1/skills/{name}/meta")
     async def skills_patch_meta(name: str, request: Request):
-        """更新 skill 的 tags 和/或分类覆盖。"""
+        """更新 skill 的 tags、分类覆盖和/或中文描述。"""
         try:
             body = await request.json()
         except Exception:
@@ -1415,16 +1420,100 @@ def create_app(
                 )
             clear_cat = bool(body.get("clear_category"))
             cat = body.get("category")
+            clear_zh = bool(body.get("clear_description_zh"))
+            zh_arg = body.get("description_zh")
+            if zh_arg is not None and not isinstance(zh_arg, str):
+                return JSONResponse(
+                    status_code=400,
+                    content=_openai_error("description_zh 须为字符串"),
+                )
             patch_skill_meta(
                 name,
                 tags=([str(x) for x in tags_arg] if isinstance(tags_arg, list) else None),
                 category=(str(cat) if cat is not None and not clear_cat else None),
                 clear_category=clear_cat,
+                description_zh=(zh_arg if isinstance(zh_arg, str) and not clear_zh else None),
+                clear_description_zh=clear_zh,
             )
             refreshed = get_skill(name)
             return refreshed or item
         except (SkillStoreError, SkillMetaError) as e:
             return _skills_http_error(e)
+
+    @app.post("/v1/skills/{name}/description-zh")
+    async def skills_ensure_description_zh(name: str, request: Request):
+        """为单个 skill 生成/刷新中文描述（不改 SKILL.md）。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        force = bool(body.get("force"))
+        use_llm = body.get("use_llm")
+        llm_flag: bool | None
+        if use_llm is None:
+            llm_flag = None
+        else:
+            llm_flag = bool(use_llm)
+        try:
+            item = get_skill(name)
+            if item is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=_openai_error(f"skill 不存在: {name}", type_="invalid_request_error"),
+                )
+            text = await asyncio.to_thread(
+                ensure_description_zh,
+                name,
+                description=str(item.get("description") or ""),
+                category=str(item.get("category") or "") or None,
+                category_label=str(item.get("category_label") or "") or None,
+                display_name=str(item.get("display_name") or "") or None,
+                force=force,
+                use_llm=llm_flag,
+            )
+            refreshed = get_skill(name) or item
+            refreshed["description_zh"] = text
+            refreshed["description_display"] = text or str(item.get("description") or "")
+            return refreshed
+        except SkillStoreError as e:
+            return _skills_http_error(e)
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                status_code=500,
+                content=_openai_error(f"生成中文描述失败: {e}", type_="api_error"),
+            )
+
+    @app.post("/v1/skills/descriptions-zh/backfill")
+    async def skills_descriptions_zh_backfill(request: Request):
+        """为已安装 skill 批量生成/刷新中文描述。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        force = bool(body.get("force"))
+        use_llm = body.get("use_llm")
+        llm_flag: bool | None
+        if use_llm is None:
+            llm_flag = None
+        else:
+            llm_flag = bool(use_llm)
+        try:
+            result = await asyncio.to_thread(
+                backfill_descriptions_zh,
+                list_skills(),
+                force=force,
+                use_llm=llm_flag,
+            )
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                status_code=500,
+                content=_openai_error(f"回填失败: {e}", type_="api_error"),
+            )
+        return result
 
     @app.get("/v1/skills/{name}")
     async def skills_get(name: str, include_body: int = 0, include_assets: int = 0):

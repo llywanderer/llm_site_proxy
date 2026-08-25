@@ -675,7 +675,12 @@ def install_from_path(
         shutil.copytree(skill_src, staged)
         _ensure_skill_dir_valid(staged, expected_name=folder_name)
         _atomic_promote(staged, dest, overwrite=overwrite)
-    return _skill_meta(dest)
+    meta = _skill_meta(dest)
+    try:
+        from skill_description_zh import maybe_generate_on_install
+    except ImportError:
+        from .skill_description_zh import maybe_generate_on_install  # type: ignore
+    return maybe_generate_on_install(meta)
 
 
 def _preferred_skill_name(skill_src: Path, name: str | None = None) -> str:
@@ -1163,7 +1168,12 @@ def generate_skill(
             _ensure_skill_dir_valid(candidate, expected_name=folder)
 
         _atomic_promote(candidate, dest, overwrite=overwrite)
-    return _skill_meta(dest)
+    meta = _skill_meta(dest)
+    try:
+        from skill_description_zh import maybe_generate_on_install
+    except ImportError:
+        from .skill_description_zh import maybe_generate_on_install  # type: ignore
+    return maybe_generate_on_install(meta)
 
 
 def delete_skill(name: str, root: Path | None = None) -> bool:
@@ -1175,4 +1185,16 @@ def delete_skill(name: str, root: Path | None = None) -> bool:
     if not target.is_dir():
         raise SkillStoreError(f"skill 不存在: {n}", status_code=404)
     shutil.rmtree(target)
+    try:
+        from skill_meta_store import clear_description_zh
+    except ImportError:
+        try:
+            from .skill_meta_store import clear_description_zh  # type: ignore
+        except ImportError:
+            clear_description_zh = None  # type: ignore
+    if clear_description_zh is not None:
+        try:
+            clear_description_zh(n)
+        except Exception:  # noqa: BLE001
+            pass
     return True

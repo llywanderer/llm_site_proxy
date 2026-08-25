@@ -38,9 +38,16 @@ type InstallProgress = {
   mode: InstallMode;
   ref: string;
   startedAt: number;
-  phase: "upload" | "install";
+  phase: "upload" | "install" | "description";
   /** 0–100；压缩包上传为真实进度，其它为估算 */
   percent: number;
+};
+
+type InstallDescStatus = {
+  names: string[];
+  phase: "generating" | "ready" | "failed";
+  blurb?: string;
+  error?: string;
 };
 
 const inputClass =
@@ -60,6 +67,25 @@ function installModeHint(mode: InstallMode): string {
     return "上传并解压 zip，校验 SKILL.md。请勿关闭页面。";
   }
   return "复制并校验 skill 目录。请勿关闭页面。";
+}
+
+function installedNamesFromResult(result: {
+  name?: string;
+  installed_names?: string[];
+  count?: number;
+  skills?: Array<{ name?: string }>;
+} | null | undefined): string[] {
+  if (!result) return [];
+  if (Array.isArray(result.installed_names) && result.installed_names.length) {
+    return result.installed_names.filter(Boolean);
+  }
+  if (Array.isArray(result.skills) && result.skills.length) {
+    return result.skills.map((s) => s.name || "").filter(Boolean);
+  }
+  if (result.name && result.name !== `${result.count || 0}-skills`) {
+    return [result.name];
+  }
+  return [];
 }
 export default function SkillsPage() {
   const [searchParams] = useSearchParams();
@@ -97,6 +123,8 @@ export default function SkillsPage() {
   );
   const [elapsed, setElapsed] = useState(0);
   const [lastInstallOk, setLastInstallOk] = useState<string | null>(null);
+  const [installDescStatus, setInstallDescStatus] =
+    useState<InstallDescStatus | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
   const [tagFilter, setTagFilter] = useState<string | "all">("all");
@@ -206,7 +234,7 @@ export default function SkillsPage() {
       if (!q) return true;
       const display = skillDisplayName(s).toLowerCase();
       const tagText = (s.tags || []).map((t) => `${t.id} ${t.label}`).join(" ");
-      const hay = `${s.name} ${s.description || ""} ${display} ${tagText}`.toLowerCase();
+      const hay = `${s.name} ${s.description || ""} ${s.description_zh || ""} ${s.description_display || ""} ${display} ${tagText}`.toLowerCase();
       return hay.includes(q);
     });
   }, [skills, query, categoryFilter, tagFilter]);
@@ -316,6 +344,7 @@ export default function SkillsPage() {
     setBusy(true);
     setError(null);
     setLastInstallOk(null);
+    setInstallDescStatus(null);
     const startedAt = Date.now();
     setInstallProgress({
       mode: installMode,
@@ -324,6 +353,7 @@ export default function SkillsPage() {
       phase: installMode === "zip" ? "upload" : "install",
       percent: 4,
     });
+    let installedNames: string[] = [];
     try {
       if (installMode === "github") {
         const body: Record<string, unknown> = {
@@ -362,14 +392,9 @@ export default function SkillsPage() {
             if (job.status === "succeeded") {
               setInstallGithub("");
               setInstallName("");
-              const names = job.result?.installed_names as string[] | undefined;
-              const count = job.result?.count as number | undefined;
-              if (names && names.length > 1) {
-                setLastInstallOk(`已安装 ${names.length} 个：${names.join(", ")}`);
-              } else if (count && count > 1) {
-                setLastInstallOk(`已安装 ${count} 个 skill`);
-              } else {
-                setLastInstallOk(job.result?.name || "安装成功");
+              installedNames = installedNamesFromResult(job.result);
+              if (!installedNames.length && started.name) {
+                installedNames = [started.name];
               }
               break;
             }
@@ -380,7 +405,10 @@ export default function SkillsPage() {
         } else {
           setInstallGithub("");
           setInstallName("");
-          setLastInstallOk(started.name || started.result?.name || "安装成功");
+          installedNames = installedNamesFromResult(started.result);
+          if (!installedNames.length && started.name) {
+            installedNames = [started.name];
+          }
         }
       } else if (installMode === "zip") {
         if (!installZip) return;
@@ -389,7 +417,6 @@ export default function SkillsPage() {
           name: installName.trim() || undefined,
           overwrite,
           onProgress: (ratio) => {
-            // 上传占 0–85%，服务端解压安装留到 85–95
             const pct = Math.round(ratio * 85);
             setInstallProgress((prev) =>
               prev
@@ -407,19 +434,75 @@ export default function SkillsPage() {
         );
         setInstallZip(null);
         setInstallName("");
-        setLastInstallOk(result?.name || "安装成功");
+        installedNames = result?.name ? [result.name] : [];
       } else {
         const result = (await api.installSkill({
           source: "path",
           ref,
           overwrite,
-        })) as { name?: string };
+        })) as {
+          name?: string;
+          installed_names?: string[];
+          skills?: Array<{ name?: string }>;
+        };
         setInstallPath("");
-        setLastInstallOk(result?.name || "安装成功");
+        installedNames = installedNamesFromResult(result);
+        if (!installedNames.length && result?.name) {
+          installedNames = [result.name];
+        }
       }
+
+      const label =
+        installedNames.length > 1
+          ? `${installedNames.length} 个：${installedNames.join(", ")}`
+          : installedNames[0] || "安装成功";
+      setLastInstallOk(label);
+      setInstallProgress((prev) =>
+        prev
+          ? { ...prev, phase: "description", percent: 97 }
+          : {
+              mode: installMode,
+              ref,
+              startedAt,
+              phase: "description",
+              percent: 97,
+            },
+      );
+      setInstallDescStatus({ names: installedNames, phase: "generating" });
+
+      let blurb = "";
+      try {
+        for (const name of installedNames) {
+          const ensured = await api.ensureSkillDescriptionZh(name);
+          if (!blurb) {
+            blurb =
+              ensured.description_display ||
+              ensured.description_zh ||
+              ensured.description ||
+              "";
+          }
+        }
+        setInstallDescStatus({
+          names: installedNames,
+          phase: "ready",
+          blurb: blurb || undefined,
+        });
+      } catch (descErr) {
+        setInstallDescStatus({
+          names: installedNames,
+          phase: "failed",
+          error:
+            descErr instanceof Error
+              ? descErr.message
+              : String(descErr || "中文描述生成失败"),
+        });
+      }
+
       await load();
+      if (installedNames[0]) setSelected(installedNames[0]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setInstallDescStatus(null);
     } finally {
       setInstallProgress(null);
       setBusy(false);
@@ -477,7 +560,11 @@ export default function SkillsPage() {
                 <div className="text-sm font-medium">
                   正在从 {installModeLabel(installProgress.mode)} 安装
                   <span className="ml-2 font-mono text-[11px] text-muted">
-                    {installProgress.phase === "upload" ? "上传中" : "安装中"}
+                    {installProgress.phase === "upload"
+                      ? "上传中"
+                      : installProgress.phase === "description"
+                        ? "生成中文描述"
+                        : "安装中"}
                     {" · "}
                     {installProgress.percent}%
                   </span>
@@ -488,7 +575,9 @@ export default function SkillsPage() {
                 <div className="mt-0.5 text-[12px] text-muted">
                   {installProgress.phase === "upload"
                     ? "正在上传压缩包到服务器…"
-                    : installModeHint(installProgress.mode)}
+                    : installProgress.phase === "description"
+                      ? "文件已安装，正在生成控制台中文描述…"
+                      : installModeHint(installProgress.mode)}
                 </div>
               </div>
             </div>
@@ -505,9 +594,35 @@ export default function SkillsPage() {
         </Panel>
       ) : null}
 
-      {lastInstallOk && !installProgress && !error ? (
-        <div className="mb-4 rounded-md border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">
-          已安装「{lastInstallOk}」
+      {(lastInstallOk || installDescStatus) && !installProgress && !error ? (
+        <div className="mb-4 rounded-md border border-ok/40 bg-ok/10 px-4 py-3 text-sm">
+          {lastInstallOk ? (
+            <div className="text-ok">已安装「{lastInstallOk}」</div>
+          ) : null}
+          {installDescStatus?.phase === "generating" ? (
+            <div className="mt-1.5 flex items-center gap-2 text-[13px] text-accent">
+              <CircleNotch size={14} className="animate-spin shrink-0" />
+              中文描述生成中…
+            </div>
+          ) : null}
+          {installDescStatus?.phase === "ready" ? (
+            <div className="mt-1.5 text-[13px] text-muted leading-relaxed">
+              <span className="text-ok">中文描述已就绪</span>
+              {installDescStatus.blurb ? (
+                <span className="mt-1 block text-[12px] text-muted line-clamp-2">
+                  {installDescStatus.blurb}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {installDescStatus?.phase === "failed" ? (
+            <div className="mt-1.5 text-[13px] text-warn">
+              中文描述生成失败
+              {installDescStatus.error
+                ? `：${installDescStatus.error}`
+                : "（列表仍可显示原文描述）"}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -719,7 +834,7 @@ export default function SkillsPage() {
                                   </div>
                                 </div>
                                 <p className="mt-0.5 text-[12px] text-muted line-clamp-1">
-                                  {skillBlurb(s.description, 100)}
+                                  {skillBlurb(s.description, 100, s)}
                                 </p>
                                 {(s.tags || []).length > 0 ? (
                                   <div className="mt-1.5 flex flex-wrap gap-1">
@@ -782,11 +897,11 @@ export default function SkillsPage() {
                   <p className="mt-0.5 font-mono text-[11px] text-muted break-all">
                     {current.name}
                   </p>
-                  {skillDescriptionFull(current.description) ? (
+                  {skillDescriptionFull(current.description, current) ? (
                     <details className="mt-3 group">
                       <summary className="cursor-pointer list-none text-sm text-muted leading-relaxed">
                         <span className="group-open:hidden">
-                          {skillBlurb(current.description, 140)}
+                          {skillBlurb(current.description, 140, current)}
                           <span className="ml-2 text-accent">展开</span>
                         </span>
                         <span className="hidden group-open:inline text-accent">
@@ -794,7 +909,7 @@ export default function SkillsPage() {
                         </span>
                       </summary>
                       <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-canvas/60 p-3 text-[12px] leading-relaxed text-muted font-sans">
-                        {skillDescriptionFull(current.description)}
+                        {skillDescriptionFull(current.description, current)}
                       </pre>
                     </details>
                   ) : (

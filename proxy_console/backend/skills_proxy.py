@@ -287,6 +287,23 @@ async def patch_skill_meta(name: str, body: dict[str, Any]) -> tuple[int, Any]:
         return resp.status_code, payload
 
 
+async def ensure_description_zh(
+    name: str, body: dict[str, Any] | None = None
+) -> tuple[int, Any]:
+    """生成/刷新单个 skill 中文描述（可能触发 LLM，超时放宽）。"""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{BRIDGE_URL}/v1/skills/{name}/description-zh",
+            headers=_headers(),
+            json=body or {},
+        )
+        try:
+            payload = resp.json()
+        except Exception:  # noqa: BLE001
+            payload = {"detail": resp.text}
+        return resp.status_code, payload
+
+
 async def set_skill_tags(name: str, tags: list[str]) -> tuple[int, Any]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.put(

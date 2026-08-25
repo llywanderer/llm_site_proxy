@@ -72,6 +72,10 @@ export type SkillTag = {
 export type SkillItem = {
   name: string;
   description?: string;
+  /** 元数据中文描述（不改 SKILL.md） */
+  description_zh?: string;
+  /** 控制台优先展示：中文或回退英文 */
+  description_display?: string;
   path?: string;
   valid?: boolean;
   disabled: boolean;
@@ -273,19 +277,42 @@ export const api = {
     }),
   patchSkillMeta: (
     name: string,
-    body: { tags?: string[]; category?: string; clear_category?: boolean },
+    body: {
+      tags?: string[];
+      category?: string;
+      clear_category?: boolean;
+      description_zh?: string;
+      clear_description_zh?: boolean;
+    },
   ) =>
     json<SkillItem>(`/api/skills/${encodeURIComponent(name)}/meta`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  ensureSkillDescriptionZh: (
+    name: string,
+    body?: { force?: boolean; use_llm?: boolean },
+  ) =>
+    json<SkillItem>(
+      `/api/skills/${encodeURIComponent(name)}/description-zh`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {}),
+      },
+    ),
   installSkill: (body: Record<string, unknown>) =>
     json<{
       name?: string;
       id?: string;
       status?: string;
       job_id?: string;
-      result?: { name?: string };
+      result?: {
+        name?: string;
+        count?: number;
+        installed_names?: string[];
+        description_zh?: string;
+        description_display?: string;
+      };
     }>("/api/skills/install", { method: "POST", body: JSON.stringify(body) }),
   skillJob: (jobId: string) =>
     json<{
@@ -296,6 +323,13 @@ export const api = {
         name?: string;
         count?: number;
         installed_names?: string[];
+        description_zh?: string;
+        description_display?: string;
+        skills?: Array<{
+          name?: string;
+          description_zh?: string;
+          description_display?: string;
+        }>;
       };
       ref?: string;
     }>(`/api/skills/jobs/${encodeURIComponent(jobId)}`),
@@ -306,7 +340,11 @@ export const api = {
     subdir?: string;
     onProgress?: (ratio: number) => void;
   }) =>
-    new Promise<{ name?: string }>((resolve, reject) => {
+    new Promise<{
+      name?: string;
+      description_zh?: string;
+      description_display?: string;
+    }>((resolve, reject) => {
       const fd = new FormData();
       fd.append("file", opts.file);
       if (opts.name) fd.append("name", opts.name);
@@ -385,13 +423,20 @@ export function authTone(state: string): string {
   return "text-warn";
 }
 
-/** SKILL.md 描述常含 \\n / 超长触发词；列表只展示首句摘要。 */
+/** SKILL.md 描述常含 \\n / 超长触发词；列表只展示首句摘要。优先用中文展示字段。 */
 export function skillBlurb(
   description?: string | null,
   maxLen = 96,
+  skill?: Pick<SkillItem, "description_display" | "description_zh" | "description"> | null,
 ): string {
-  if (!description?.trim()) return "无描述";
-  const normalized = description
+  const preferred =
+    skill?.description_display?.trim() ||
+    skill?.description_zh?.trim() ||
+    description ||
+    skill?.description ||
+    "";
+  if (!preferred?.trim()) return "无描述";
+  const normalized = preferred
     .replace(/\\n/g, "\n")
     .replace(/\\"/g, '"')
     .replace(/\r/g, "")
@@ -406,9 +451,18 @@ export function skillBlurb(
   return `${compact.slice(0, Math.max(1, maxLen - 1))}…`;
 }
 
-export function skillDescriptionFull(description?: string | null): string {
-  if (!description?.trim()) return "";
-  return description
+export function skillDescriptionFull(
+  description?: string | null,
+  skill?: Pick<SkillItem, "description_display" | "description_zh" | "description"> | null,
+): string {
+  const preferred =
+    skill?.description_display?.trim() ||
+    skill?.description_zh?.trim() ||
+    description ||
+    skill?.description ||
+    "";
+  if (!preferred?.trim()) return "";
+  return preferred
     .replace(/\\n/g, "\n")
     .replace(/\\"/g, '"')
     .replace(/\r/g, "")
