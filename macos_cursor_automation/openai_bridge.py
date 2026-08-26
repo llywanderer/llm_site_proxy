@@ -73,6 +73,8 @@
 - ``CURSOR_SKILLS_ZH_LLM``：安装/回填时是否 LLM 润色中文描述（默认 ``1``；失败回退模板）。
 - ``CURSOR_SKILLS_ZH_ON_INSTALL``：安装成功后自动生成 ``description_zh``（默认 ``1``）。
 - ``CURSOR_SKILLS_ZH_TIMEOUT``：中文描述 LLM 超时秒数（默认 ``60``）。
+- ``CURSOR_SKILLS_CATEGORY_LLM``：安装/回填时是否 LLM 推断分类（默认 ``1``；仅当规则落到 other）。
+- ``CURSOR_SKILLS_CATEGORY_ON_INSTALL``：安装成功后自动推断分类（默认 ``1``）。
 """
 
 from __future__ import annotations
@@ -135,6 +137,7 @@ try:
         update_tag,
     )
     from .skill_description_zh import backfill_descriptions_zh, ensure_description_zh
+    from .skill_category_llm import backfill_categories
 except ImportError:
     from cursor_automation import (
         AgentMode,
@@ -175,6 +178,7 @@ except ImportError:
         update_tag,
     )
     from skill_description_zh import backfill_descriptions_zh, ensure_description_zh
+    from skill_category_llm import backfill_categories
 
 try:
     from .image_generation import (
@@ -1512,6 +1516,36 @@ def create_app(
             return JSONResponse(
                 status_code=500,
                 content=_openai_error(f"回填失败: {e}", type_="api_error"),
+            )
+        return result
+
+    @app.post("/v1/skills/categories/backfill")
+    async def skills_categories_backfill(request: Request):
+        """为已安装且规则落到 other 的 skill 批量 LLM 推断分类。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        force = bool(body.get("force"))
+        use_llm = body.get("use_llm")
+        llm_flag: bool | None
+        if use_llm is None:
+            llm_flag = None
+        else:
+            llm_flag = bool(use_llm)
+        try:
+            result = await asyncio.to_thread(
+                backfill_categories,
+                list_skills(),
+                force=force,
+                use_llm=llm_flag,
+            )
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                status_code=500,
+                content=_openai_error(f"分类回填失败: {e}", type_="api_error"),
             )
         return result
 

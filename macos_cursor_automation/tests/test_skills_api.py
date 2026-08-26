@@ -34,6 +34,9 @@ class SkillsApiTests(unittest.TestCase):
             os.environ["CURSOR_SKILLS_DIR"] = str(skills_root)
             # 清除鉴权，避免影响其它测试环境
             os.environ.pop("CURSOR_OPENAI_BRIDGE_API_KEY", None)
+            os.environ["CURSOR_SKILLS_CATEGORY_ON_INSTALL"] = "0"
+            os.environ["CURSOR_SKILLS_CATEGORY_LLM"] = "0"
+            os.environ["CURSOR_SKILLS_ZH_ON_INSTALL"] = "0"
 
             app = create_app(default_workspace=workspace, agent_mode="ask", agent_timeout=30.0)
             client = TestClient(app)

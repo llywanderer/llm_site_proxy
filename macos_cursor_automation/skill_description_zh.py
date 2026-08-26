@@ -220,6 +220,8 @@ def _category_hint(category: str | None, category_label: str | None) -> str:
         "utility": "工具箱",
         "platform": "平台/运维",
         "motion": "成片运动",
+        "engineering": "工程开发",
+        "game": "游戏与引擎",
         "other": "通用能力",
     }
     return mapping.get(cid, "通用能力")
@@ -451,22 +453,30 @@ def attach_description_fields(item: dict[str, Any]) -> dict[str, Any]:
 def maybe_generate_on_install(item: dict[str, Any]) -> dict[str, Any]:
     """安装成功后可选生成中文描述，并刷新展示字段。"""
     if not zh_on_install_enabled():
-        return attach_description_fields(item)
-    name = str(item.get("name") or "").strip()
-    if not name:
-        return item
+        attach_description_fields(item)
+    else:
+        name = str(item.get("name") or "").strip()
+        if name:
+            try:
+                ensure_description_zh(
+                    name,
+                    description=str(item.get("description") or ""),
+                    category=str(item.get("category") or "") or None,
+                    category_label=str(item.get("category_label") or "") or None,
+                    display_name=str(item.get("display_name") or "") or None,
+                    force=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("install 后生成中文描述失败 name=%s err=%s", name, e)
+        attach_description_fields(item)
     try:
-        ensure_description_zh(
-            name,
-            description=str(item.get("description") or ""),
-            category=str(item.get("category") or "") or None,
-            category_label=str(item.get("category_label") or "") or None,
-            display_name=str(item.get("display_name") or "") or None,
-            force=False,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.warning("install 后生成中文描述失败 name=%s err=%s", name, e)
-    return attach_description_fields(item)
+        from skill_category_llm import maybe_categorize_on_install
+    except ImportError:
+        try:
+            from .skill_category_llm import maybe_categorize_on_install  # type: ignore
+        except ImportError:
+            return item
+    return maybe_categorize_on_install(item)
 
 
 def backfill_descriptions_zh(

@@ -17,6 +17,7 @@ from skills_store import (
     install,
     install_from_path,
     list_skills,
+    slugify_skill_name,
     validate_skill_name,
 )
 
@@ -32,8 +33,22 @@ def _write_skill(dir_path: Path, name: str, description: str = "test skill desc"
 
 
 class SkillsStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # 安装钩子默认会打 LLM；单测不依赖 bridge
+        os.environ["CURSOR_SKILLS_CATEGORY_ON_INSTALL"] = "0"
+        os.environ["CURSOR_SKILLS_CATEGORY_LLM"] = "0"
+        os.environ.setdefault("CURSOR_SKILLS_ZH_ON_INSTALL", "0")
+
     def test_validate_skill_name_ok(self) -> None:
         self.assertEqual(validate_skill_name("hv-analysis"), "hv-analysis")
+
+    def test_slugify_skill_name(self) -> None:
+        self.assertEqual(slugify_skill_name("hv-analysis"), "hv-analysis")
+        self.assertEqual(slugify_skill_name("Viral Writer"), "viral-writer")
+        self.assertEqual(slugify_skill_name("Viral_Writer_Skill"), "viral-writer-skill")
+        self.assertEqual(slugify_skill_name("Foo--Bar"), "foo-bar")
+        with self.assertRaises(SkillStoreError):
+            slugify_skill_name("你好")
 
     def test_parse_multiline_description_block(self) -> None:
         from skills_store import _parse_frontmatter, parse_skill_md
@@ -98,15 +113,22 @@ class SkillsStoreTests(unittest.TestCase):
                 install_from_path(src, root=root, overwrite=False)
             self.assertEqual(ctx.exception.status_code, 409)
 
-    def test_install_name_mismatch_400(self) -> None:
+    def test_install_rewrites_frontmatter_name_mismatch(self) -> None:
+        """目标 name 与 frontmatter 不一致时，以文件夹名为准改写 frontmatter。"""
+        from skills_store import parse_skill_md
+
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
             root = td_path / "skills"
             root.mkdir()
             src = _write_skill(td_path / "src", "demo-skill")
-            with self.assertRaises(SkillStoreError) as ctx:
-                install_from_path(src, name="other-name", root=root)
-            self.assertEqual(ctx.exception.status_code, 400)
+            meta = install_from_path(src, name="other-name", root=root)
+            self.assertEqual(meta["name"], "other-name")
+            self.assertTrue(meta["valid"])
+            parsed = parse_skill_md(root / "other-name" / "SKILL.md")
+            self.assertEqual(parsed["name"], "other-name")
+            self.assertTrue(parsed["valid"])
+            self.assertFalse((root / "demo-skill").exists())
 
     def test_git_remote_disabled_403(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -282,6 +304,40 @@ class SkillsStoreTests(unittest.TestCase):
             )
             self.assertEqual(meta["name"], "darwin-skill")
             self.assertTrue((root / "darwin-skill" / "SKILL.md").is_file())
+
+    def test_install_slugifies_human_readable_frontmatter_name(self) -> None:
+        """第三方仓库常见 ``Viral Writer``；安装时规范为 kebab-case 并改写 frontmatter。"""
+        from skills_store import _preferred_skill_name, install_from_path, parse_skill_md
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            root = td_path / "skills"
+            root.mkdir()
+            clone = td_path / "repo"
+            clone.mkdir()
+            (clone / "SKILL.md").write_text(
+                "---\n"
+                "name: Viral Writer\n"
+                "description: >\n"
+                "  自媒体内容创作工具\n"
+                "---\n\n# Viral Writer\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_preferred_skill_name(clone), "viral-writer")
+            meta = install_from_path(
+                clone,
+                name=_preferred_skill_name(clone),
+                overwrite=True,
+                root=root,
+            )
+            self.assertEqual(meta["name"], "viral-writer")
+            self.assertTrue(meta["valid"])
+            installed = root / "viral-writer" / "SKILL.md"
+            self.assertTrue(installed.is_file())
+            parsed = parse_skill_md(installed)
+            self.assertEqual(parsed["name"], "viral-writer")
+            self.assertTrue(parsed["valid"])
+            self.assertIn("自媒体", parsed["description"])
 
     def test_url_install_with_zip(self) -> None:
         with tempfile.TemporaryDirectory() as td:

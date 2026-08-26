@@ -73,6 +73,44 @@ def validate_skill_name(name: str) -> str:
     return n
 
 
+def slugify_skill_name(raw: str) -> str:
+    """将第三方 skill 名规范为 ``^[a-z0-9]+(-[a-z0-9]+)*$``。
+
+    例：``Viral Writer`` → ``viral-writer``，``Viral_Writer_Skill`` → ``viral-writer-skill``。
+    已合法的名称原样返回。
+    """
+    n = (raw or "").strip()
+    if _SKILL_NAME_RE.fullmatch(n):
+        return n
+    s = n.lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    if not s or not _SKILL_NAME_RE.fullmatch(s):
+        raise SkillStoreError(
+            f"skill name 须匹配 ^[a-z0-9]+(-[a-z0-9]+)*$（无法从 {raw!r} 规范化）",
+            status_code=400,
+        )
+    return s
+
+
+def _rewrite_frontmatter_name(md_path: Path, new_name: str) -> None:
+    """将 SKILL.md frontmatter 的 ``name`` 改写为目标文件夹名。"""
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise SkillStoreError(f"无法读取 SKILL.md: {e}", status_code=400) from e
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        raise SkillStoreError("SKILL.md 缺少 YAML frontmatter", status_code=400)
+    fm = m.group(1)
+    if re.search(r"(?m)^name:\s*", fm):
+        fm2 = re.sub(r"(?m)^name:\s*.*$", f"name: {new_name}", fm, count=1)
+    else:
+        fm2 = f"name: {new_name}\n{fm}"
+    body = text[m.end() :]
+    md_path.write_text(f"---\n{fm2}\n---\n{body}", encoding="utf-8")
+
+
 def _parse_frontmatter(text: str) -> dict[str, str]:
     """解析 SKILL.md YAML frontmatter（支持单行与 ``|`` / ``>`` 多行块）。"""
     m = _FRONTMATTER_RE.match(text)
@@ -655,16 +693,11 @@ def install_from_path(
             )
         else:
             raise SkillStoreError("未找到含 SKILL.md 的目录", status_code=400)
-    folder_name = validate_skill_name(name or skill_src.name)
+    folder_name = slugify_skill_name(name or skill_src.name)
     md = skill_src / "SKILL.md"
     if not md.is_file():
         raise SkillStoreError("目录内缺少 SKILL.md", status_code=400)
     parsed = parse_skill_md(md)
-    if parsed.get("name") != folder_name:
-        raise SkillStoreError(
-            f"frontmatter name={parsed.get('name')!r} 须与目标 name={folder_name!r} 一致",
-            status_code=400,
-        )
     if not parsed.get("description"):
         raise SkillStoreError("SKILL.md 缺少 description", status_code=400)
 
@@ -673,6 +706,9 @@ def install_from_path(
     with tempfile.TemporaryDirectory(prefix="skill_install_") as td:
         staged = Path(td) / folder_name
         shutil.copytree(skill_src, staged)
+        staged_md = staged / "SKILL.md"
+        if parse_skill_md(staged_md).get("name") != folder_name:
+            _rewrite_frontmatter_name(staged_md, folder_name)
         _ensure_skill_dir_valid(staged, expected_name=folder_name)
         _atomic_promote(staged, dest, overwrite=overwrite)
     meta = _skill_meta(dest)
@@ -684,9 +720,12 @@ def install_from_path(
 
 
 def _preferred_skill_name(skill_src: Path, name: str | None = None) -> str:
-    """优先 frontmatter name；避免临时目录名（如 clone 的 repo）覆盖真实 skill 名。"""
+    """优先 frontmatter name；避免临时目录名（如 clone 的 repo）覆盖真实 skill 名。
+
+    第三方仓库常见 ``Viral Writer`` / ``Foo_Bar`` 等非法名，安装前规范为 kebab-case。
+    """
     if name and str(name).strip():
-        return str(name).strip()
+        return slugify_skill_name(str(name).strip())
     md = skill_src / "SKILL.md"
     parsed = parse_skill_md(md) if md.is_file() else {}
     fm = parsed.get("name") if isinstance(parsed.get("name"), str) else ""
@@ -694,8 +733,8 @@ def _preferred_skill_name(skill_src: Path, name: str | None = None) -> str:
     folder = skill_src.name
     # git clone 落在 TemporaryDirectory/.../repo；zip 解压也可能叫 extract
     if folder in {"repo", "extract", "pack", "src", "tmp"} and fm:
-        return fm
-    return fm or folder
+        return slugify_skill_name(fm)
+    return slugify_skill_name(fm or folder)
 
 
 def _filter_skill_dirs(
@@ -1186,15 +1225,24 @@ def delete_skill(name: str, root: Path | None = None) -> bool:
         raise SkillStoreError(f"skill 不存在: {n}", status_code=404)
     shutil.rmtree(target)
     try:
-        from skill_meta_store import clear_description_zh
+        from skill_meta_store import clear_description_zh, set_inferred_category
     except ImportError:
         try:
-            from .skill_meta_store import clear_description_zh  # type: ignore
+            from .skill_meta_store import (  # type: ignore
+                clear_description_zh,
+                set_inferred_category,
+            )
         except ImportError:
             clear_description_zh = None  # type: ignore
+            set_inferred_category = None  # type: ignore
     if clear_description_zh is not None:
         try:
             clear_description_zh(n)
+        except Exception:  # noqa: BLE001
+            pass
+    if set_inferred_category is not None:
+        try:
+            set_inferred_category(n, None)
         except Exception:  # noqa: BLE001
             pass
     return True

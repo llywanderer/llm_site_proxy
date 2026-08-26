@@ -1,9 +1,11 @@
 """Skills 分类：服务端单一来源，供 ``GET /v1/skills`` 与下游 UI 使用。
 
 优先级（高 → 低）：
-1. ``CURSOR_SKILLS_TAXONOMY`` / ``CURSOR_SKILLS_TAXONOMY_PATH`` 覆盖（JSON）
+1. Console ``by_name`` 覆盖（``.skills-meta.json``）
 2. SKILL.md frontmatter 的 ``category`` / ``type``
-3. 命名约定回退（``*-perspective``、``baoyu-post-to-*`` 等）
+3. 默认/环境 ``by_name`` 与命名约定（``*-perspective``、``baoyu-post-to-*`` 等）
+4. LLM 推断 ``inferred_by_name``
+5. ``other``
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ _DEFAULT_CATEGORIES: tuple[dict[str, Any], ...] = (
         "label": "内容创作",
         "hint": "配图、漫画、封面、信息图、幻灯片",
         "accent": "#2bb8c8",
-        "purposes": ["image", "text"],
+        "purposes": ["image"],
     },
     {
         "id": "publish",
@@ -76,6 +78,20 @@ _DEFAULT_CATEGORIES: tuple[dict[str, Any], ...] = (
         "purposes": ["motion"],
     },
     {
+        "id": "engineering",
+        "label": "工程开发",
+        "hint": "全栈/固件/安全检测/领域工程实现与原型",
+        "accent": "#6b7fd7",
+        "purposes": ["text"],
+    },
+    {
+        "id": "game",
+        "label": "游戏与引擎",
+        "hint": "Unity / Unreal / Godot、技术美术、游戏音频、XR",
+        "accent": "#c47a2b",
+        "purposes": ["text", "image"],
+    },
+    {
         "id": "other",
         "label": "其它",
         "hint": "尚未归类",
@@ -110,6 +126,18 @@ _TYPE_ALIASES: dict[str, str] = {
     "motion": "motion",
     "remotion": "motion",
     "video": "motion",
+    "engineering": "engineering",
+    "engineer": "engineering",
+    "dev": "engineering",
+    "development": "engineering",
+    "firmware": "engineering",
+    "game": "game",
+    "games": "game",
+    "gamedev": "game",
+    "unity": "game",
+    "unreal": "game",
+    "godot": "game",
+    "xr": "game",
     "other": "other",
 }
 
@@ -275,6 +303,7 @@ def categorize_skill(
     name: str,
     *,
     frontmatter: dict[str, Any] | None = None,
+    include_inferred: bool = True,
 ) -> dict[str, Any]:
     """根据名称 + frontmatter 归类，返回分类元数据字段。"""
     cats = list_categories()
@@ -336,6 +365,21 @@ def categorize_skill(
             cid = "utility" if "utility" in known else None
             source = "rule:baoyu-default"
 
+    # 4) LLM 推断（低于规则，高于 other）
+    if cid is None and include_inferred:
+        try:
+            from skill_meta_store import get_inferred_category
+        except ImportError:
+            try:
+                from .skill_meta_store import get_inferred_category  # type: ignore
+            except ImportError:
+                get_inferred_category = None  # type: ignore
+        if get_inferred_category is not None:
+            inferred = get_inferred_category(n)
+            if inferred and inferred in known and inferred != "other":
+                cid = inferred
+                source = "llm:inferred"
+
     if cid is None or cid not in known:
         cid = "other" if "other" in known else cats[-1]["id"]
         if source == "fallback":
@@ -355,6 +399,16 @@ def categorize_skill(
         "display_name": display,
         "family": family,
     }
+
+
+def needs_inferred_category(
+    name: str,
+    *,
+    frontmatter: dict[str, Any] | None = None,
+) -> bool:
+    """现有规则（不含 LLM 推断）是否会落到 other。"""
+    tax = categorize_skill(name, frontmatter=frontmatter, include_inferred=False)
+    return str(tax.get("category") or "") == "other"
 
 
 def _display_name(name: str) -> str:

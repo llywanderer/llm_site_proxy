@@ -45,6 +45,7 @@ def _empty_doc() -> dict[str, Any]:
         "tags": [dict(t) for t in _DEFAULT_TAGS],
         "skill_tags": {},
         "by_name": {},
+        "inferred_by_name": {},
         "descriptions_zh": {},
     }
 
@@ -104,6 +105,14 @@ def _load_unlocked() -> dict[str, Any]:
             cid = str(v).strip().lower()
             if name and cid:
                 by_name[name] = cid
+    inferred_by_name: dict[str, str] = {}
+    ibn = data.get("inferred_by_name")
+    if isinstance(ibn, dict):
+        for k, v in ibn.items():
+            name = str(k).strip().lower()
+            cid = str(v).strip().lower()
+            if name and cid:
+                inferred_by_name[name] = cid
     descriptions_zh: dict[str, str] = {}
     dz = data.get("descriptions_zh")
     if isinstance(dz, dict):
@@ -117,6 +126,7 @@ def _load_unlocked() -> dict[str, Any]:
         "tags": tags,
         "skill_tags": skill_tags,
         "by_name": by_name,
+        "inferred_by_name": inferred_by_name,
         "descriptions_zh": descriptions_zh,
     }
 
@@ -130,6 +140,7 @@ def _save_unlocked(doc: dict[str, Any]) -> None:
         "tags": doc.get("tags") or [],
         "skill_tags": doc.get("skill_tags") or {},
         "by_name": doc.get("by_name") or {},
+        "inferred_by_name": doc.get("inferred_by_name") or {},
         "descriptions_zh": doc.get("descriptions_zh") or {},
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -319,6 +330,37 @@ def set_skill_category(name: str, category_id: str | None) -> str | None:
         cid = str(category_id).strip().lower()
         by_name[n] = cid
         doc["by_name"] = by_name
+        _save_unlocked(doc)
+        return cid
+
+
+def get_inferred_category(name: str) -> str | None:
+    n = (name or "").strip().lower()
+    if not n:
+        return None
+    return (load_meta().get("inferred_by_name") or {}).get(n)
+
+
+def inferred_by_name_map() -> dict[str, str]:
+    return dict(load_meta().get("inferred_by_name") or {})
+
+
+def set_inferred_category(name: str, category_id: str | None) -> str | None:
+    """写入 LLM 推断分类；优先级低于 Console/frontmatter/命名规则。传空则清除。"""
+    with _lock:
+        doc = _load_unlocked()
+        n = (name or "").strip().lower()
+        if not n:
+            raise SkillMetaError("skill name 不能为空", status_code=400)
+        inferred = dict(doc.get("inferred_by_name") or {})
+        if category_id is None or not str(category_id).strip():
+            inferred.pop(n, None)
+            doc["inferred_by_name"] = inferred
+            _save_unlocked(doc)
+            return None
+        cid = str(category_id).strip().lower()
+        inferred[n] = cid
+        doc["inferred_by_name"] = inferred
         _save_unlocked(doc)
         return cid
 
