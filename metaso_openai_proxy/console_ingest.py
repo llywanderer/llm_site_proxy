@@ -238,6 +238,62 @@ def extract_response_text(payload: Any, *, content_type: str = "") -> str | None
     return None
 
 
+def _clip_client_label(value: Any, *, max_len: int = 64) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text[:max_len]
+
+
+def extract_client_source(
+    headers: Any = None,
+    request_obj: Any = None,
+) -> dict[str, Any]:
+    """解析调用方平台（BookTok / 公众号 Agent 等）。
+
+    优先级：
+    1. Header ``X-Client-Platform`` / ``X-Request-Source`` / ``X-Client-Name``
+    2. Body ``metadata.client_platform`` / ``platform`` / ``app`` / ``client``
+    附带 ``user_agent`` / ``origin``（若有）便于排查。
+    """
+    out: dict[str, Any] = {}
+    header_map: dict[str, Any] = {}
+    if headers is not None:
+        try:
+            header_map = {str(k).lower(): v for k, v in dict(headers).items()}
+        except Exception:  # noqa: BLE001
+            header_map = {}
+
+    platform: str | None = None
+    for key in ("x-client-platform", "x-request-source", "x-client-name"):
+        platform = _clip_client_label(header_map.get(key))
+        if platform:
+            out["via"] = "header"
+            break
+
+    if not platform and isinstance(request_obj, dict):
+        meta = request_obj.get("metadata")
+        if isinstance(meta, dict):
+            for key in ("client_platform", "platform", "app", "client"):
+                platform = _clip_client_label(meta.get(key))
+                if platform:
+                    out["via"] = "metadata"
+                    break
+
+    if platform:
+        out["platform"] = platform
+
+    ua = _clip_client_label(header_map.get("user-agent"), max_len=160)
+    if ua:
+        out["user_agent"] = ua
+    origin = _clip_client_label(header_map.get("origin"), max_len=160)
+    if origin:
+        out["origin"] = origin
+    return out
+
+
 def build_io_meta(
     *,
     request_obj: Any = None,
@@ -444,6 +500,17 @@ def install_console_ingest_middleware(app: Any, *, proxy_id: str | None = None) 
             error = str(exc)[:500]
             raise
         finally:
+            client = extract_client_source(
+                headers=getattr(request, "headers", None),
+                request_obj=request_obj,
+            )
+            if client.get("platform"):
+                log.info(
+                    "request.client platform=%s via=%s path=%s",
+                    client.get("platform"),
+                    client.get("via") or "-",
+                    path,
+                )
             report_request(
                 proxy_id=pid,
                 path=path,
@@ -455,5 +522,6 @@ def install_console_ingest_middleware(app: Any, *, proxy_id: str | None = None) 
                     request_obj=request_obj,
                     response_bytes=response_bytes,
                     content_type=content_type,
+                    extra={"client": client} if client else None,
                 ),
             )

@@ -37,6 +37,26 @@ const WINDOW_OPTIONS = [
 
 const WINDOW_STORAGE_KEY = "proxy_console_overview_window_sec";
 
+function platformFromMeta(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta) return null;
+  const client = meta.client;
+  if (client && typeof client === "object") {
+    const platform = (client as Record<string, unknown>).platform;
+    if (typeof platform === "string" && platform.trim()) return platform.trim();
+  }
+  const request = meta.request;
+  if (request && typeof request === "object") {
+    const md = (request as Record<string, unknown>).metadata;
+    if (md && typeof md === "object") {
+      for (const key of ["client_platform", "platform", "app", "client"] as const) {
+        const value = (md as Record<string, unknown>)[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+      }
+    }
+  }
+  return null;
+}
+
 function readStoredWindowSec(): number {
   try {
     const raw = localStorage.getItem(WINDOW_STORAGE_KEY);
@@ -317,6 +337,11 @@ export default function OverviewPage() {
                     {requests.map((r) => {
                       const bad =
                         r.status_code == null || r.status_code >= 400;
+                      const meta =
+                        r.meta && typeof r.meta === "object"
+                          ? (r.meta as Record<string, unknown>)
+                          : null;
+                      const platform = platformFromMeta(meta);
                       return (
                         <li key={r.id}>
                           <button
@@ -342,6 +367,14 @@ export default function OverviewPage() {
                               <span className="truncate">
                                 {r.model || r.mode}
                               </span>
+                              {platform ? (
+                                <span
+                                  className="truncate text-accent"
+                                  title="请求来源平台"
+                                >
+                                  {platform}
+                                </span>
+                              ) : null}
                             </div>
                           </button>
                         </li>
@@ -537,6 +570,7 @@ function RequestDrawer({
     typeof meta?.response_text === "string" ? meta.response_text : null;
   const responseBody = meta?.response;
   const source = typeof meta?.source === "string" ? meta.source : null;
+  const platform = platformFromMeta(meta);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -568,6 +602,7 @@ function RequestDrawer({
               ["latency", fmtMs(item.latency_ms)],
               ["model", item.model || "-"],
               ["time", fmtTime(item.created_at)],
+              ["platform", platform || "-"],
               ["source", source || "-"],
               ["error", item.error || "-"],
             ] as const

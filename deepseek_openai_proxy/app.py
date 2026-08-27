@@ -514,12 +514,19 @@ def create_app(
                 default=getattr(browser_backend, "default_deep_thinking", False),
             )
             session_id = extract_session_id(payload)
+            try:
+                from .console_ingest import extract_client_source
+            except ImportError:
+                from console_ingest import extract_client_source
+
+            client = extract_client_source(headers=request.headers, request_obj=payload)
             logger.info(
-                "chat.new_chat=%s session_id=%s web_mode=%s deep_thinking=%s",
+                "chat.new_chat=%s session_id=%s web_mode=%s deep_thinking=%s client_platform=%s",
                 new_chat,
                 session_id or "-",
                 web_mode,
                 deep_thinking,
+                client.get("platform") or "-",
             )
             answer = await browser_backend.chat_completion(
                 payload,

@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from console_ingest import (  # noqa: E402
     build_io_meta,
+    extract_client_source,
     extract_model_from_body,
     extract_model_from_request,
     extract_response_text,
@@ -75,6 +76,34 @@ def test_extract_model_from_body() -> None:
     assert extract_model_from_body(b'{"model":"gpt-x","messages":[]}') == "gpt-x"
     assert extract_model_from_body(b"not-json") is None
     assert extract_model_from_body(None) is None
+
+
+def test_extract_client_source_prefers_header_over_metadata() -> None:
+    got = extract_client_source(
+        headers={"X-Client-Platform": "booktok-factory", "User-Agent": "OpenAI/Python"},
+        request_obj={"metadata": {"client_platform": "wechat-article-agent"}},
+    )
+    assert got["platform"] == "booktok-factory"
+    assert got["via"] == "header"
+    assert "OpenAI" in got["user_agent"]
+
+
+def test_extract_client_source_from_metadata() -> None:
+    got = extract_client_source(
+        headers={"user-agent": "httpx/0.27"},
+        request_obj={"metadata": {"platform": "wechat-article-agent"}},
+    )
+    assert got["platform"] == "wechat-article-agent"
+    assert got["via"] == "metadata"
+
+
+def test_build_io_meta_includes_client_extra() -> None:
+    meta = build_io_meta(
+        request_obj={"model": "deepseek-chat-web"},
+        extra={"client": {"platform": "booktok-factory", "via": "header"}},
+    )
+    assert meta["source"] == "proxy_live"
+    assert meta["client"]["platform"] == "booktok-factory"
 
 
 def _multipart_body(
