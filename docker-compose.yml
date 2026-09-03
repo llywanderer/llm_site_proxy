@@ -225,7 +225,8 @@ services:
       - "${CATALOG_PORT:-18010}:8000"
     environment:
       CATALOG_PUBLIC_HOST: ${CATALOG_PUBLIC_HOST:-10.1.10.113}
-      CATALOG_PROBE_TIMEOUT: ${CATALOG_PROBE_TIMEOUT:-2.0}
+      # cursor /v1/models 偶发 >2s（CLI 列举）；过短会得到 online + models=[]
+      CATALOG_PROBE_TIMEOUT: ${CATALOG_PROBE_TIMEOUT:-8.0}
       DEEPSEEK_PROXY_API_KEY: ${DEEPSEEK_PROXY_API_KEY:-local-secret}
       KIMI_PROXY_API_KEY: ${KIMI_PROXY_API_KEY:-local-secret}
       STEPFUN_PROXY_API_KEY: ${STEPFUN_PROXY_API_KEY:-local-secret}

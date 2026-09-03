@@ -70,6 +70,20 @@ def cursor_agent_models_argv(cli_path: str) -> list[str]:
     return [cli_path, "agent", "models"]
 
 
+def resolve_cursor_models_cli() -> str | None:
+    """列出模型时优先独立 ``agent`` / ``cursor-agent``。
+
+    Docker Linux 安装脚本常在 ``~/.local/bin/cursor`` 放 shim：``cursor agent models``
+    会把 argv 原样转给 ``agent``（变成 ``agent agent models``），或在未信任 cwd
+    （如容器 ``/app``）下卡住 Workspace Trust。直接 ``agent models`` 可稳定列出模型。
+    """
+    for name in ("agent", "cursor-agent"):
+        w = shutil.which(name)
+        if w:
+            return w
+    return resolve_cursor_cli()
+
+
 def stream_readline_limit() -> int:
     """stream-json 单行 stdout 最大字节数（默认 64 MiB）。
 
@@ -447,16 +461,21 @@ def build_serve_uvicorn_log_config(log_dir: Path) -> dict[str, Any]:
 
 
 def fetch_cursor_agent_models(*, timeout: float = 30.0) -> list[dict[str, Any]]:
-    """执行 ``cursor agent models``，解析为 OpenAI ``/v1/models`` 风格的 ``data`` 项列表。
+    """执行 ``agent models`` / ``cursor agent models``，解析为 OpenAI ``/v1/models`` 风格列表。
 
+    优先独立 ``agent`` 二进制（见 :func:`resolve_cursor_models_cli`）。
     解析失败、CLI 不可用或命令非零退出时返回空列表。
     """
-    cli = resolve_cursor_cli()
+    cli = resolve_cursor_models_cli()
     if not cli:
         return []
+    argv = cursor_agent_models_argv(cli)
+    # 统一入口 ``cursor`` 在非交互环境可能要求工作区信任；独立 agent 不需要。
+    if not _cursor_cli_is_standalone_agent_bin(cli):
+        argv = [*argv, "--trust"]
     try:
         cp = subprocess.run(
-            cursor_agent_models_argv(cli),
+            argv,
             capture_output=True,
             text=True,
             timeout=timeout,

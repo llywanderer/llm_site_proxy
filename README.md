@@ -11,6 +11,8 @@ export CATALOG_PUBLIC_HOST=10.1.10.113
 docker-compose -f docker-compose.yml up -d --build
 
 docker-compose up -d --build deepseek-openai-proxy
+
+docker-compose build --no-cache cursor-openai-bridge
 ```
 
 ## 服务发现（推荐）
