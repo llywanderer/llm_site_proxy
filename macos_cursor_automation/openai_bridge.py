@@ -687,6 +687,53 @@ def _extract_svg_from_agent_text(agent_text: str) -> str:
     return t[: j + len("</svg>")].strip()
 
 
+def _prompt_requests_cursor_image_skills(prompt: str) -> bool:
+    text = prompt or ""
+    if "【最高优先级 · Cursor 生图 Skills】" in text:
+        return True
+    return bool(
+        re.search(r"(?:^|[\s\"'`(/])/(?:[a-z0-9]+(?:-[a-z0-9]+)*)\b", text, flags=re.MULTILINE)
+    )
+
+
+def _normalize_skill_execution_mode(raw: Any) -> str:
+    mode = str(raw or "").strip().lower().replace("-", "_")
+    if mode in ("native_skill", "skill_wins", "skill_first"):
+        return "native_skill"
+    return ""
+
+
+def _looks_like_booktok_image_brief(prompt: str) -> bool:
+    """vtok BookTok 长 brief / 主体一致性约束；勿切换到公众号 Skill-wins 包装。"""
+    text = prompt or ""
+    markers = (
+        "TASK STYLE LOCK",
+        "BookTok",
+        "subject_presence",
+        "Visual World Bible",
+        "video_quality_contract",
+        "PORTRAIT FRAMING",
+    )
+    return any(m in text for m in markers)
+
+
+def _should_use_native_skill_execution(
+    *,
+    brief: str,
+    skill_execution_mode: str = "",
+    article_kind: str = "",
+) -> bool:
+    """仅公众号等显式 opt-in 走 Skill-wins；默认 Creative brief，避免误伤 vtok。"""
+    if _normalize_skill_execution_mode(skill_execution_mode) != "native_skill":
+        return False
+    kind = str(article_kind or "").strip().lower()
+    if kind in ("booktok", "vtok", "subject_image_world"):
+        return False
+    if _looks_like_booktok_image_brief(brief):
+        return False
+    return _prompt_requests_cursor_image_skills(brief)
+
+
 def _interactive_image_agent_prompt(
     user_prompt: str,
     w: str,
@@ -695,8 +742,15 @@ def _interactive_image_agent_prompt(
     *,
     aspect_mode: str = "fixed",
     content_kind: str = "general",
+    skill_execution_mode: str = "",
+    article_kind: str = "",
 ) -> str:
-    """与 IDE 聊天类似：要求 Agent 使用内置生图能力并将 PNG 落到约定路径。"""
+    """与 IDE 聊天类似：要求 Agent 使用内置生图能力并将 PNG 落到约定路径。
+
+    默认把 user prompt 当 Creative brief（vtok / BookTok 兼容）。
+    仅当调用方显式传 ``skill_execution_mode=native_skill``（公众号配图）且 brief
+    含 ``/skill`` 触发行时，才改为「原生执行 Skill 工作流、Skill 优先」。
+    """
     p = out_path.expanduser().resolve()
     ck = (content_kind or "general").strip().lower()
     if ck == "tech":
@@ -714,6 +768,30 @@ def _interactive_image_agent_prompt(
         )
     else:
         framing = f"Target size hint: about {w} x {h} pixels (match aspect ratio when the tool allows).\n\n"
+    brief = (user_prompt or "").strip()
+    if _should_use_native_skill_execution(
+        brief=brief,
+        skill_execution_mode=skill_execution_mode,
+        article_kind=article_kind or content_kind,
+    ):
+        return (
+            "Task: execute the listed Cursor image Skills to produce exactly ONE raster PNG.\n\n"
+            "Mandatory Skill execution:\n"
+            "1. Treat every `/skill-name` line (and the「Cursor 生图 Skills」block) as required. "
+            "Load each Skill's SKILL.md from the installed global skills and follow its full workflow "
+            "(strategy / shot-config, prompt assembly from the Skill templates, generation, QA, and retries if defined).\n"
+            "2. The Content brief below is article/content input for the Skill — not a pixel-perfect override. "
+            "When the brief conflicts with the Skill (background, density, path/connector semantics, forbidden elements, "
+            "whitespace, labels), the Skill wins.\n"
+            "3. Do not invent environment decoration or background story outside Skill rules.\n"
+            "4. Use the same built-in image generation capability you have in the Cursor IDE chat "
+            "(for example a GenerateImage-style tool, if available). "
+            "Do not use SVG as the only deliverable; the user needs a saved PNG file on disk.\n\n"
+            f"{framing}"
+            f"Save the final image to this exact absolute path (create parent directories if needed):\n{p}\n\n"
+            "Content brief for the Skill:\n"
+            f"{brief}\n"
+        )
     return (
         "Task: generate exactly ONE raster image file (PNG) from the creative brief below.\n\n"
         "Use the same built-in image generation capability you have in the Cursor IDE chat "
@@ -722,7 +800,7 @@ def _interactive_image_agent_prompt(
         f"{framing}"
         f"Save the final image to this exact absolute path (create parent directories if needed):\n{p}\n\n"
         "Creative brief:\n"
-        f"{user_prompt.strip()}\n"
+        f"{brief}\n"
     )
 
 
@@ -1898,9 +1976,18 @@ def create_app(
                     target="diffusion",
                 )
                 aspect_mode = "auto" if str(meta.get("image_aspect_mode") or "").strip().lower() == "auto" else "fixed"
-                content_kind = "tech" if str(meta.get("article_kind") or "").strip().lower() == "tech" else "general"
+                article_kind = str(meta.get("article_kind") or "").strip().lower()
+                content_kind = "tech" if article_kind == "tech" else "general"
+                skill_execution_mode = str(meta.get("skill_execution_mode") or "").strip()
                 agent_prompt = _interactive_image_agent_prompt(
-                    styled, w, h, out_png, aspect_mode=aspect_mode, content_kind=content_kind
+                    styled,
+                    w,
+                    h,
+                    out_png,
+                    aspect_mode=aspect_mode,
+                    content_kind=content_kind,
+                    skill_execution_mode=skill_execution_mode,
+                    article_kind=article_kind,
                 )
                 img_agent_mode: AgentMode | None = None
                 raw_img_mode = os.environ.get("CURSOR_BRIDGE_IMAGE_AGENT_MODE", "").strip().lower()
