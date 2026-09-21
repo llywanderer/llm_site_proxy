@@ -475,8 +475,17 @@ def maybe_generate_on_install(item: dict[str, Any]) -> dict[str, Any]:
         try:
             from .skill_category_llm import maybe_categorize_on_install  # type: ignore
         except ImportError:
+            maybe_categorize_on_install = None  # type: ignore
+    if maybe_categorize_on_install is not None:
+        item = maybe_categorize_on_install(item)
+    try:
+        from skill_preview import maybe_preview_on_install
+    except ImportError:
+        try:
+            from .skill_preview import maybe_preview_on_install  # type: ignore
+        except ImportError:
             return item
-    return maybe_categorize_on_install(item)
+    return maybe_preview_on_install(item)
 
 
 def backfill_descriptions_zh(

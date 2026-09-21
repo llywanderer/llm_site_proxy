@@ -23,6 +23,7 @@
 | POST | `/v1/skills/install` | `{source: path\|git\|url, ref, name?, overwrite?, subdir?, branch?}`；远程需 `CURSOR_SKILLS_ALLOW_REMOTE=1`。git 默认超时 `CURSOR_SKILLS_REMOTE_TIMEOUT`（1200s）。慢网络请用 `/v1/skills/jobs` 或 zip 上传。 |
 | POST | `/v1/skills/generate` | `{prompt, name, overwrite?}` 由 agent 生成并落盘 |
 | DELETE | `/v1/skills/{name}` | 卸载 |
+| PATCH | `/v1/skills/{name}/meta` | 更新 tags / category / `is_image_style` 三态覆盖 / 中文描述 |
 
 **使用：** 仍走 `/v1/chat/completions`，在消息里写 `/skill-name …`（或靠 description 自动选用）。需要写文件/跑脚本时用 `metadata.cursor_agent_mode: "writable"`。
 

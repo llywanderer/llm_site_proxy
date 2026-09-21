@@ -75,6 +75,11 @@
 - ``CURSOR_SKILLS_ZH_TIMEOUT``：中文描述 LLM 超时秒数（默认 ``60``）。
 - ``CURSOR_SKILLS_CATEGORY_LLM``：安装/回填时是否 LLM 推断分类（默认 ``1``；仅当规则落到 other）。
 - ``CURSOR_SKILLS_CATEGORY_ON_INSTALL``：安装成功后自动推断分类（默认 ``1``）。
+- ``CURSOR_SKILLS_PREVIEW``：生图 skill 预览图能力（默认 ``1``）；列表带 ``preview_url``。
+- ``CURSOR_SKILLS_PREVIEW_ON_INSTALL``：安装后自动物化/生成 ``preview.png``（默认 ``1``）。
+- ``CURSOR_SKILLS_PREVIEW_GENERATE``：无 examples 时是否用 agent 生预览（默认 ``1``）。
+- ``CURSOR_SKILLS_PREVIEW_AUTO_BACKFILL``：进程启动后后台串行补缺预览（默认 ``1``）。
+- ``CURSOR_SKILLS_PREVIEW_QUEUE_DELAY``：串行队列任务间隔秒（默认 ``2``）。
 """
 
 from __future__ import annotations
@@ -125,6 +130,8 @@ try:
         installed_skill_names,
         list_skills,
         list_skills_payload,
+        skills_root,
+        validate_skill_name,
     )
     from .skills_jobs import get_job as get_install_job
     from .skills_jobs import start_install_job
@@ -138,6 +145,12 @@ try:
     )
     from .skill_description_zh import backfill_descriptions_zh, ensure_description_zh
     from .skill_category_llm import backfill_categories
+    from .skill_preview import (
+        backfill_previews,
+        ensure_preview,
+        preview_file,
+        start_preview_autogen,
+    )
 except ImportError:
     from cursor_automation import (
         AgentMode,
@@ -166,6 +179,8 @@ except ImportError:
         installed_skill_names,
         list_skills,
         list_skills_payload,
+        skills_root,
+        validate_skill_name,
     )
     from skills_jobs import get_job as get_install_job
     from skills_jobs import start_install_job
@@ -179,6 +194,12 @@ except ImportError:
     )
     from skill_description_zh import backfill_descriptions_zh, ensure_description_zh
     from skill_category_llm import backfill_categories
+    from skill_preview import (
+        backfill_previews,
+        ensure_preview,
+        preview_file,
+        start_preview_autogen,
+    )
 
 try:
     from .image_generation import (
@@ -201,7 +222,7 @@ except ImportError:
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 import httpx
 
 MediaKind = Literal["image", "video"]
@@ -1301,6 +1322,11 @@ def create_app(
 
     install_console_ingest_middleware(app, proxy_id="cursor-openai-bridge")
 
+    @app.on_event("startup")
+    async def _skills_preview_autogen_startup() -> None:
+        # 后台串行补缺预览；不阻塞启动
+        start_preview_autogen(delay_sec=3.0)
+
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         if expected_key and request.url.path.startswith("/v1/"):
@@ -1474,7 +1500,7 @@ def create_app(
 
     @app.patch("/v1/skills/{name}/meta")
     async def skills_patch_meta(name: str, request: Request):
-        """更新 skill 的 tags、分类覆盖和/或中文描述。"""
+        """更新 skill 的 tags、分类覆盖、is_image_style 覆盖和/或中文描述。"""
         try:
             body = await request.json()
         except Exception:
@@ -1509,6 +1535,13 @@ def create_app(
                     status_code=400,
                     content=_openai_error("description_zh 须为字符串"),
                 )
+            clear_iis = bool(body.get("clear_is_image_style"))
+            iis_arg = body.get("is_image_style")
+            if iis_arg is not None and not isinstance(iis_arg, bool):
+                return JSONResponse(
+                    status_code=400,
+                    content=_openai_error("is_image_style 须为布尔值"),
+                )
             patch_skill_meta(
                 name,
                 tags=([str(x) for x in tags_arg] if isinstance(tags_arg, list) else None),
@@ -1516,6 +1549,8 @@ def create_app(
                 clear_category=clear_cat,
                 description_zh=(zh_arg if isinstance(zh_arg, str) and not clear_zh else None),
                 clear_description_zh=clear_zh,
+                is_image_style=(iis_arg if isinstance(iis_arg, bool) and not clear_iis else None),
+                clear_is_image_style=clear_iis,
             )
             refreshed = get_skill(name)
             return refreshed or item
@@ -1627,6 +1662,36 @@ def create_app(
             )
         return result
 
+    @app.post("/v1/skills/previews/backfill")
+    async def skills_previews_backfill(request: Request):
+        """批量为生图类 skill 补预览（默认异步排队）。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        force = bool(body.get("force"))
+        sync = bool(body.get("sync"))
+        try:
+            limit = int(body.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        try:
+            result = await asyncio.to_thread(
+                backfill_previews,
+                list_skills(),
+                force=force,
+                sync=sync,
+                limit=limit,
+            )
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                status_code=500,
+                content=_openai_error(f"preview 回填失败: {e}", type_="api_error"),
+            )
+        return result
+
     @app.get("/v1/skills/{name}")
     async def skills_get(name: str, include_body: int = 0, include_assets: int = 0):
         try:
@@ -1643,6 +1708,55 @@ def create_app(
                 content=_openai_error(f"skill 不存在: {name}", type_="invalid_request_error"),
             )
         return item
+
+    @app.get("/v1/skills/{name}/preview")
+    async def skills_preview_get(name: str):
+        """返回 skill 目录下 ``preview.png``（生图选型缩略图）。"""
+        try:
+            n = validate_skill_name(name)
+        except SkillStoreError as e:
+            return _skills_http_error(e)
+        path = preview_file(skills_root() / n)
+        if not path.is_file():
+            return JSONResponse(
+                status_code=404,
+                content=_openai_error(
+                    f"preview 不存在: {n}",
+                    type_="invalid_request_error",
+                ),
+            )
+        return FileResponse(
+            path,
+            media_type="image/png",
+            filename=f"{n}-preview.png",
+        )
+
+    @app.post("/v1/skills/{name}/preview/ensure")
+    async def skills_preview_ensure(name: str, request: Request):
+        """物化或生成 preview.png；默认异步排队。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        force = bool(body.get("force"))
+        sync = bool(body.get("sync"))
+        try:
+            result = await asyncio.to_thread(
+                ensure_preview,
+                name,
+                force=force,
+                sync=sync,
+            )
+        except SkillStoreError as e:
+            return _skills_http_error(e)
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                status_code=500,
+                content=_openai_error(f"preview 失败: {e}", type_="api_error"),
+            )
+        return result
 
     @app.post("/v1/skills/install")
     async def skills_install(request: Request):

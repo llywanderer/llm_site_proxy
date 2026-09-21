@@ -1,4 +1,4 @@
-"""Skills 可写元数据：标签库 + skill→tags / category 覆盖 + 中文描述。
+"""Skills 可写元数据：标签库 + skill→tags / category / is_image_style 覆盖 + 中文描述。
 
 持久化文件默认 ``{CURSOR_SKILLS_DIR}/.skills-meta.json``，
 可用 ``CURSOR_SKILLS_META_PATH`` 覆盖。与 skills 目录同卷，重启不丢。
@@ -47,6 +47,7 @@ def _empty_doc() -> dict[str, Any]:
         "by_name": {},
         "inferred_by_name": {},
         "descriptions_zh": {},
+        "is_image_style_by_name": {},
     }
 
 
@@ -121,6 +122,25 @@ def _load_unlocked() -> dict[str, Any]:
             text = str(v).strip() if v is not None else ""
             if name and text:
                 descriptions_zh[name] = text
+    is_image_style_by_name: dict[str, bool] = {}
+    iis = data.get("is_image_style_by_name")
+    if isinstance(iis, dict):
+        for k, v in iis.items():
+            name = str(k).strip().lower()
+            if not name:
+                continue
+            if isinstance(v, bool):
+                is_image_style_by_name[name] = v
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                # JSON 偶发 0/1；拒绝其它类型
+                if v in (0, 1):
+                    is_image_style_by_name[name] = bool(v)
+            elif isinstance(v, str):
+                low = v.strip().lower()
+                if low in ("true", "1", "yes"):
+                    is_image_style_by_name[name] = True
+                elif low in ("false", "0", "no"):
+                    is_image_style_by_name[name] = False
     return {
         "version": int(data.get("version") or 1),
         "tags": tags,
@@ -128,6 +148,7 @@ def _load_unlocked() -> dict[str, Any]:
         "by_name": by_name,
         "inferred_by_name": inferred_by_name,
         "descriptions_zh": descriptions_zh,
+        "is_image_style_by_name": is_image_style_by_name,
     }
 
 
@@ -142,6 +163,7 @@ def _save_unlocked(doc: dict[str, Any]) -> None:
         "by_name": doc.get("by_name") or {},
         "inferred_by_name": doc.get("inferred_by_name") or {},
         "descriptions_zh": doc.get("descriptions_zh") or {},
+        "is_image_style_by_name": doc.get("is_image_style_by_name") or {},
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     tmp.write_text(text, encoding="utf-8")
@@ -409,6 +431,50 @@ def clear_description_zh(name: str) -> bool:
         return existed
 
 
+def get_is_image_style_override(name: str) -> bool | None:
+    """返回 is_image_style 强制覆盖；无覆盖则 None。"""
+    n = (name or "").strip().lower()
+    if not n:
+        return None
+    raw = (load_meta().get("is_image_style_by_name") or {}).get(n)
+    if isinstance(raw, bool):
+        return raw
+    return None
+
+
+def set_is_image_style_override(name: str, value: bool | None) -> bool | None:
+    """设置 is_image_style 覆盖；传 None 则清除。"""
+    with _lock:
+        doc = _load_unlocked()
+        n = (name or "").strip().lower()
+        if not n:
+            raise SkillMetaError("skill name 不能为空", status_code=400)
+        mapping = dict(doc.get("is_image_style_by_name") or {})
+        if value is None:
+            mapping.pop(n, None)
+            doc["is_image_style_by_name"] = mapping
+            _save_unlocked(doc)
+            return None
+        mapping[n] = bool(value)
+        doc["is_image_style_by_name"] = mapping
+        _save_unlocked(doc)
+        return bool(value)
+
+
+def clear_is_image_style_override(name: str) -> bool:
+    """删除 skill 时清理覆盖；返回是否曾存在。"""
+    with _lock:
+        doc = _load_unlocked()
+        n = (name or "").strip().lower()
+        mapping = dict(doc.get("is_image_style_by_name") or {})
+        existed = n in mapping
+        if existed:
+            mapping.pop(n, None)
+            doc["is_image_style_by_name"] = mapping
+            _save_unlocked(doc)
+        return existed
+
+
 def patch_skill_meta(
     name: str,
     *,
@@ -417,8 +483,10 @@ def patch_skill_meta(
     clear_category: bool = False,
     description_zh: str | None = None,
     clear_description_zh: bool = False,
+    is_image_style: bool | None = None,
+    clear_is_image_style: bool = False,
 ) -> dict[str, Any]:
-    """一次更新 tags、category 覆盖和/或中文描述。"""
+    """一次更新 tags、category / is_image_style 覆盖和/或中文描述。"""
     result: dict[str, Any] = {"name": name}
     if tags is not None:
         result["tags"] = set_skill_tags(name, tags)
@@ -432,4 +500,11 @@ def patch_skill_meta(
         result["description_zh"] = None
     elif description_zh is not None:
         result["description_zh"] = set_description_zh(name, description_zh)
+    if clear_is_image_style:
+        set_is_image_style_override(name, None)
+        result["is_image_style_override"] = None
+    elif is_image_style is not None:
+        result["is_image_style_override"] = set_is_image_style_override(
+            name, bool(is_image_style)
+        )
     return result

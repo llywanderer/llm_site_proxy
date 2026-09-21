@@ -77,6 +77,8 @@ class SkillMetaPatchBody(BaseModel):
     clear_category: bool = False
     description_zh: str | None = None
     clear_description_zh: bool = False
+    is_image_style: bool | None = None
+    clear_is_image_style: bool = False
 
 
 class SkillDescriptionZhBody(BaseModel):
@@ -329,6 +331,11 @@ async def api_skills() -> dict[str, Any]:
         skills.append(
             {
                 **s,
+                "preview_url": (
+                    f"/api/skills/{name}/preview"
+                    if s.get("is_image_style") or s.get("has_preview") or s.get("preview_url")
+                    else s.get("preview_url")
+                ),
                 "disabled": bool(d),
                 "disabled_at": d.get("disabled_at") if d else None,
                 "disabled_reason": d.get("reason") if d else None,
@@ -444,6 +451,18 @@ async def api_skills_tags_delete(tag_id: str) -> Any:
     if status >= 400:
         raise HTTPException(status, payload)
     return payload
+
+
+@app.get("/api/skills/{name}/preview")
+async def api_skills_preview(name: str) -> Any:
+    status, payload, media = await skills_proxy.get_skill_preview(name)
+    if status == 404:
+        raise HTTPException(404, payload if isinstance(payload, dict) else {"detail": "not found"})
+    if status >= 400:
+        raise HTTPException(status, payload if isinstance(payload, dict) else {"detail": str(payload)})
+    from fastapi.responses import Response
+
+    return Response(content=payload, media_type=media or "image/png")
 
 
 @app.patch("/api/skills/{name}/meta")

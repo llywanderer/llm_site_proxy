@@ -130,6 +130,10 @@ export default function SkillsPage() {
   const [tagFilter, setTagFilter] = useState<string | "all">("all");
   const [draftTagIds, setDraftTagIds] = useState<string[]>([]);
   const [draftCategory, setDraftCategory] = useState("");
+  /** "" = 自动；"true" / "false" = 强制 */
+  const [draftImageStyle, setDraftImageStyle] = useState<"" | "true" | "false">(
+    "",
+  );
   const [newTagId, setNewTagId] = useState("");
   const [newTagLabel, setNewTagLabel] = useState("");
   const [newTagColor, setNewTagColor] = useState("#2bb8c8");
@@ -184,6 +188,7 @@ export default function SkillsPage() {
     if (!current) {
       setDraftTagIds([]);
       setDraftCategory("");
+      setDraftImageStyle("");
       return;
     }
     setDraftTagIds(
@@ -192,6 +197,10 @@ export default function SkillsPage() {
         : (current.tags || []).map((t) => t.id),
     );
     setDraftCategory((current.category || "other").trim() || "other");
+    const ov = current.is_image_style_override;
+    if (ov === true) setDraftImageStyle("true");
+    else if (ov === false) setDraftImageStyle("false");
+    else setDraftImageStyle("");
   }, [current]);
 
   useEffect(() => {
@@ -284,10 +293,21 @@ export default function SkillsPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.patchSkillMeta(current.name, {
+      const body: {
+        tags: string[];
+        category?: string;
+        is_image_style?: boolean;
+        clear_is_image_style?: boolean;
+      } = {
         tags: draftTagIds,
         category: draftCategory || undefined,
-      });
+      };
+      if (draftImageStyle === "") {
+        body.clear_is_image_style = true;
+      } else {
+        body.is_image_style = draftImageStyle === "true";
+      }
+      await api.patchSkillMeta(current.name, body);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -951,6 +971,38 @@ export default function SkillsPage() {
                       </select>
                     </div>
                     <div>
+                      <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px] text-muted">
+                        <span>生图画风</span>
+                        <span
+                          className={[
+                            "rounded px-1.5 py-0.5 text-[11px] font-medium",
+                            current.is_image_style
+                              ? "bg-accent/15 text-accent"
+                              : "bg-panel text-muted",
+                          ].join(" ")}
+                        >
+                          {current.is_image_style ? "是" : "否"}
+                          {current.is_image_style_source === "meta"
+                            ? " · 手动"
+                            : " · 自动"}
+                        </span>
+                      </div>
+                      <select
+                        value={draftImageStyle}
+                        onChange={(e) =>
+                          setDraftImageStyle(
+                            e.target.value as "" | "true" | "false",
+                          )
+                        }
+                        disabled={busy}
+                        className="w-full rounded-md border border-line bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent disabled:opacity-60"
+                      >
+                        <option value="">自动</option>
+                        <option value="true">是</option>
+                        <option value="false">否</option>
+                      </select>
+                    </div>
+                    <div>
                       <div className="mb-1.5 text-[12px] text-muted">标签</div>
                       {tagCatalog.length === 0 ? (
                         <p className="text-[12px] text-muted">
@@ -991,7 +1043,7 @@ export default function SkillsPage() {
                       )}
                     </div>
                     <GhostButton disabled={busy} onClick={() => void saveSkillMeta()}>
-                      保存分类/标签
+                      保存分类/标签/画风
                     </GhostButton>
                   </div>
 

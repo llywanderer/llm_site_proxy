@@ -89,12 +89,6 @@ _SEND_BUTTON_NEAR_INPUT_JS = """
 }
 """
 
-WEB_MODE_LABELS = {
-    "fast": "快速模式",
-    "expert": "专家模式",
-    "vision": "识图模式",
-}
-
 GENERATION_ACTIVE_SELECTORS = [
     'button:has-text("停止")',
     'button:has-text("Stop")',
@@ -137,7 +131,6 @@ class BrowserDeepSeekClient:
         user_agent: str | None = None,
         new_chat_per_request: bool = True,
         new_chat_selector: str | None = None,
-        default_web_mode: str = "fast",
         default_deep_thinking: bool = False,
     ) -> None:
         self.user_data_dir = user_data_dir
@@ -155,7 +148,6 @@ class BrowserDeepSeekClient:
         self.user_agent = user_agent
         self.new_chat_per_request = new_chat_per_request
         self.new_chat_selector = new_chat_selector
-        self.default_web_mode = default_web_mode
         self.default_deep_thinking = default_deep_thinking
         self._playwright: Any | None = None
         self._browser: Any | None = None
@@ -163,8 +155,7 @@ class BrowserDeepSeekClient:
         self._page: Any | None = None
         self._lock = asyncio.Lock()
         self._active_session_id: str | None = None
-        # Avoid re-clicking mode toggles every request (bare text= clicks can hide the composer).
-        self._applied_web_mode: str | None = None
+        # Avoid re-clicking the deep-thinking toggle every request.
         self._applied_deep_thinking: bool | None = None
 
     @classmethod
@@ -187,7 +178,6 @@ class BrowserDeepSeekClient:
             user_agent=os.getenv("DEEPSEEK_USER_AGENT"),
             new_chat_per_request=os.getenv("DEEPSEEK_NEW_CHAT_PER_REQUEST", "1") == "1",
             new_chat_selector=os.getenv("DEEPSEEK_NEW_CHAT_SELECTOR"),
-            default_web_mode=os.getenv("DEEPSEEK_WEB_MODE", "fast"),
             default_deep_thinking=os.getenv("DEEPSEEK_DEEP_THINKING", "0") == "1",
         )
 
@@ -602,40 +592,14 @@ class BrowserDeepSeekClient:
                 continue
         raise RuntimeError(f"未找到可用的 DeepSeek 页面选项控件: {option_name}")
 
-    async def _select_web_mode(self, page: Any, web_mode: str) -> bool:
-        label = WEB_MODE_LABELS.get(web_mode)
-        if not label:
-            raise ValueError(f"unsupported DeepSeek web mode: {web_mode!r}")
-        short_label = label.replace("模式", "")
-        selectors = [
-            f'[role="radio"]:has-text("{label}")',
-            f'[tabindex="0"]:has-text("{label}")',
-            f'[role="button"]:has-text("{label}")',
-            f'div.ds-segmented-button:has-text("{label}")',
-        ]
-        if short_label and short_label != label:
-            selectors.extend(
-                [
-                    f'[role="radio"]:has-text("{short_label}")',
-                    f'[tabindex="0"]:has-text("{short_label}")',
-                ]
-            )
-        # Last resort only — skipped automatically when aria state is missing.
-        selectors.append(f'text="{label}"')
-        return await self._click_if_needed(
-            page,
-            selectors,
-            state_attribute="aria-checked",
-            desired=True,
-            option_name=f"web_mode:{web_mode}",
-        )
-
     async def _set_deep_thinking(self, page: Any, enabled: bool) -> bool:
         return await self._click_if_needed(
             page,
             [
                 '[tabindex="0"]:has-text("深度思考")',
                 'div.ds-toggle-button:has-text("深度思考")',
+                'button:has-text("深度思考")',
+                '[role="button"]:has-text("深度思考")',
                 'text="深度思考"',
             ],
             state_attribute="aria-pressed",
@@ -647,20 +611,8 @@ class BrowserDeepSeekClient:
         self,
         page: Any,
         *,
-        web_mode: str | None = None,
         deep_thinking: bool | None = None,
     ) -> None:
-        if web_mode:
-            if web_mode == self._applied_web_mode:
-                logger.info("browser.option skip=web_mode:%s reason=session_cached", web_mode)
-            else:
-                try:
-                    await self._select_web_mode(page, web_mode)
-                    self._applied_web_mode = web_mode
-                except RuntimeError as exc:
-                    # Keep going with whatever mode the page already shows.
-                    logger.warning("browser.option web_mode failed: %s", exc)
-                    self._applied_web_mode = web_mode
         if deep_thinking is not None:
             if deep_thinking == self._applied_deep_thinking:
                 logger.info(
@@ -868,8 +820,8 @@ class BrowserDeepSeekClient:
         *,
         new_chat: bool | None = None,
         session_id: str | None = None,
-        web_mode: str | None = None,
         deep_thinking: bool | None = None,
+        **_ignored: Any,
     ) -> str:
         messages = payload.get("messages") or []
         if not isinstance(messages, list):
@@ -893,7 +845,6 @@ class BrowserDeepSeekClient:
             if should_new_chat:
                 await self._start_new_conversation(page)
                 self._active_session_id = sid
-                self._applied_web_mode = None
                 self._applied_deep_thinking = None
             elif sid and not self._active_session_id:
                 self._active_session_id = sid
@@ -901,7 +852,6 @@ class BrowserDeepSeekClient:
                 logger.info("browser.session_id=%s new_chat=%s", sid, should_new_chat)
             await self._apply_chat_options(
                 page,
-                web_mode=web_mode or self.default_web_mode,
                 deep_thinking=self.default_deep_thinking if deep_thinking is None else deep_thinking,
             )
             await asyncio.sleep(0.2)
@@ -914,11 +864,9 @@ class BrowserDeepSeekClient:
             if not await self._locator_is_visible(input_box) and not should_new_chat:
                 logger.warning("browser.input still_hidden; recovering with new_chat")
                 await self._start_new_conversation(page)
-                self._applied_web_mode = None
                 self._applied_deep_thinking = None
                 await self._apply_chat_options(
                     page,
-                    web_mode=web_mode or self.default_web_mode,
                     deep_thinking=(
                         self.default_deep_thinking if deep_thinking is None else deep_thinking
                     ),

@@ -102,25 +102,24 @@ Browser 模式下，代理维护一个长期运行的 Playwright 页面。每次
 
 > **注意：** `new_chat` 仅对 `browser` 后端生效；`official` 模式由客户端自行维护 `messages` 历史，忽略此参数。
 
-### DeepSeek 网页模式控制
+### DeepSeek 深度思考控制
 
-Browser 模式还支持在发送消息前切换 DeepSeek 网页上的模式按钮：
+DeepSeek 网页已取消「快速 / 专家 / 识图」模式，仅保留「深度思考」开关（以及页面上的「智能搜索」，本代理暂不控制）。
 
 | 参数 | 可选值 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `deepseek_mode` | `fast` / `expert` / `vision` | `fast` | 对应页面的「快速模式 / 专家模式 / 识图模式」 |
 | `deep_thinking` | `true` / `false` | `false` | 是否开启页面上的「深度思考」 |
 
-`deepseek_mode` 也接受别名：`quick`、`normal`、`快速模式` → `fast`；`pro`、`专家模式` → `expert`；`image`、`识图模式` → `vision`。
+遗留字段 `deepseek_mode` / `X-DeepSeek-Mode` / `DEEPSEEK_WEB_MODE` 会被忽略（兼容旧客户端，不报错）。
 
 优先级同 `new_chat`：
 
 | 优先级 | 来源 | 示例 |
 | --- | --- | --- |
-| 1 | 请求体字段 | `"deepseek_mode": "expert"`、`"deep_thinking": true` |
-| 2 | 请求体 `metadata` | `"metadata": {"deepseek_mode": "vision", "deep_thinking": true}` |
-| 3 | HTTP 头 | `X-DeepSeek-Mode: expert`、`X-DeepSeek-Deep-Thinking: true` |
-| 4 | 环境变量 | `DEEPSEEK_WEB_MODE=fast`、`DEEPSEEK_DEEP_THINKING=0` |
+| 1 | 请求体字段 | `"deep_thinking": true` |
+| 2 | 请求体 `metadata` | `"metadata": {"deep_thinking": true}` |
+| 3 | HTTP 头 | `X-DeepSeek-Deep-Thinking: true` |
+| 4 | 环境变量 | `DEEPSEEK_DEEP_THINKING=0` |
 
 ### curl 示例
 
@@ -150,7 +149,7 @@ curl http://127.0.0.1:18002/v1/chat/completions \
   }'
 ```
 
-**快速模式 + 深度思考：**
+**开启深度思考：**
 
 ```bash
 curl http://127.0.0.1:18002/v1/chat/completions \
@@ -159,40 +158,9 @@ curl http://127.0.0.1:18002/v1/chat/completions \
   -d '{
     "model": "deepseek-chat-web",
     "deep_thinking": true,
-    "messages": [{"role": "user", "content": "用快速模式深入分析这个问题"}]
+    "messages": [{"role": "user", "content": "深入分析这个问题"}]
   }'
 ```
-
-
-**专家模式 + 深度思考：**
-
-```bash
-curl http://127.0.0.1:18002/v1/chat/completions \
-  -H "Authorization: Bearer local-secret" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-chat-web",
-    "deepseek_mode": "expert",
-    "deep_thinking": true,
-    "messages": [{"role": "user", "content": "用专家模式深入分析这个问题"}]
-  }'
-```
-
-**识图模式 + 深度思考：**
-
-```bash
-curl http://127.0.0.1:18002/v1/chat/completions \
-  -H "Authorization: Bearer local-secret" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-chat-web",
-    "deepseek_mode": "vision",
-    "deep_thinking": true,
-    "messages": [{"role": "user", "content": "切换到识图模式并开启深度思考"}]
-  }'
-```
-
-> 当前代理已支持切换到「识图模式」，但尚未实现自动上传图片文件；OpenAI 多模态 `image_url` 内容仍会按原有逻辑转成文本占位。
 
 **通过 HTTP 头控制：**
 
@@ -200,7 +168,6 @@ curl http://127.0.0.1:18002/v1/chat/completions \
 curl http://127.0.0.1:18002/v1/chat/completions \
   -H "Authorization: Bearer local-secret" \
   -H "X-DeepSeek-New-Chat: false" \
-  -H "X-DeepSeek-Mode: expert" \
   -H "X-DeepSeek-Deep-Thinking: true" \
   -H "Content-Type: application/json" \
   -d '{
@@ -237,11 +204,11 @@ client.chat.completions.create(
     extra_body={"metadata": {"new_chat": False}},
 )
 
-# 专家模式 + 深度思考
+# 深度思考
 client.chat.completions.create(
     model="deepseek-chat-web",
     messages=[{"role": "user", "content": "深入分析一下"}],
-    extra_body={"deepseek_mode": "expert", "deep_thinking": True},
+    extra_body={"deep_thinking": True},
 )
 ```
 
@@ -313,7 +280,6 @@ environment:
   DEEPSEEK_STORAGE_STATE_FILE: /run/secrets/deepseek_storage.json
   DEEPSEEK_CURL_FILE: /run/secrets/deepseek_curl.txt
   DEEPSEEK_NEW_CHAT_PER_REQUEST: "1"   # 默认每次新建会话；设为 0 则默认复用
-  DEEPSEEK_WEB_MODE: fast              # fast / expert / vision
   DEEPSEEK_DEEP_THINKING: "0"          # 默认不开启深度思考；设为 1 则默认开启
 volumes:
   - ./secrets:/run/secrets:ro
@@ -383,7 +349,6 @@ Cookie JSON 格式：
 | `DEEPSEEK_BROWSER_START_TIMEOUT` | 同 `DEEPSEEK_BROWSER_TIMEOUT` | 等待回答**开始**超时（秒）；深度思考可单独调大 |
 | `DEEPSEEK_NEW_CHAT_PER_REQUEST` | `1` | 默认是否每次新建会话（`0` 默认复用） |
 | `DEEPSEEK_NEW_CHAT_SELECTOR` | — | 自定义「新对话」按钮 CSS 选择器（UI 改版时使用） |
-| `DEEPSEEK_WEB_MODE` | `fast` | 默认网页模式：`fast` 快速模式、`expert` 专家模式、`vision` 识图模式 |
 | `DEEPSEEK_DEEP_THINKING` | `0` | 默认是否开启「深度思考」（`1` 开启，`0` 关闭） |
 | `DEEPSEEK_LOG_LEVEL` | `INFO` | 日志级别 |
 | `DEEPSEEK_LOG_MAX_CHARS` | `500` | 单条日志字段最大字符数，超出部分截断；设为 `0` 则省略内容 |
@@ -397,14 +362,11 @@ Cookie JSON 格式：
 | `new_chat` | `boolean` | `true` 新建网页会话；`false` 复用当前会话 |
 | `metadata.new_chat` | `boolean` | 同上，适用于 `extra_body={"metadata": {...}}` |
 | `X-DeepSeek-New-Chat` | HTTP 头 | 同上，`true` / `false` |
-| `deepseek_mode` | `string` | 网页模式：`fast` / `expert` / `vision`，分别对应「快速模式 / 专家模式 / 识图模式」 |
-| `metadata.deepseek_mode` | `string` | 同上，适用于 `extra_body={"metadata": {...}}` |
-| `X-DeepSeek-Mode` | HTTP 头 | 同上，也支持 `quick`、`normal`、`pro`、`image`、中文模式名等别名 |
 | `deep_thinking` | `boolean` | 是否开启网页上的「深度思考」 |
 | `metadata.deep_thinking` | `boolean` | 同上，适用于 `extra_body={"metadata": {...}}` |
 | `X-DeepSeek-Deep-Thinking` | HTTP 头 | 同上，`true` / `false` |
 
-请求级字段优先级高于环境变量。未传 `deepseek_mode` 时使用 `DEEPSEEK_WEB_MODE`，未传 `deep_thinking` 时使用 `DEEPSEEK_DEEP_THINKING`。
+请求级字段优先级高于环境变量。未传 `deep_thinking` 时使用 `DEEPSEEK_DEEP_THINKING`。遗留的 `deepseek_mode` 会被忽略。
 
 ---
 
@@ -415,9 +377,9 @@ Cookie JSON 格式：
 | `service.start` | 启动完成，含 backend 与路由列表 |
 | `request.start` / `request.end` | HTTP 请求与耗时 |
 | `chat.request` / `chat.response` | 聊天内容与回答摘要 |
-| `chat.new_chat` | 本次是否新建网页会话、选择的网页模式和深度思考开关 |
+| `chat.new_chat` | 本次是否新建网页会话与深度思考开关 |
 | `browser.new_chat` | 点击新对话按钮或回退导航 |
-| `browser.option` | 页面模式 / 深度思考控件的点击或跳过记录 |
+| `browser.option` | 深度思考控件的点击或跳过记录 |
 | `browser.input` | 匹配到的输入框选择器 |
 
 `Authorization`、`Cookie` 等敏感头在日志中会自动脱敏。
@@ -443,7 +405,7 @@ docker logs -f deepseek-openai-proxy
 | 多轮对话无上下文 | 确认后续请求传 `"new_chat": false`；检查日志中 `chat.new_chat=false` |
 | `Timed out waiting for DeepSeek to start answering` | 多为消息未发出或深度思考启动慢；复用会话时仅发送当前 system+user（不含历史 assistant）；可设 `DEEPSEEK_BROWSER_START_TIMEOUT=600` |
 | 每次回答混入上一轮内容 | 确认传 `"new_chat": true` 或保持默认 `DEEPSEEK_NEW_CHAT_PER_REQUEST=1` |
-| `未找到可用的 DeepSeek 页面选项控件` | DeepSeek 页面 UI 可能改版；先确认已进入聊天页，再检查「快速模式 / 专家模式 / 识图模式 / 深度思考」是否仍可见 |
+| `未找到可用的 DeepSeek 页面选项控件` | DeepSeek 页面 UI 可能改版；先确认已进入聊天页，再检查「深度思考」按钮是否仍可见 |
 | 传了 `deep_thinking=true` 但未开启 | 检查日志 `browser.option`；若页面控件已开启会记录 skip，若未命中控件会返回错误 |
 
 更新 curl 或 storage state 后重启：

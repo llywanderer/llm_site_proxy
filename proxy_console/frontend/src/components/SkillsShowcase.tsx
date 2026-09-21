@@ -288,11 +288,20 @@ function SkillRow({
         className="flex items-center gap-2 px-3 py-1.5 hover:bg-panel-2/70 transition active:scale-[0.995]"
       >
         <span
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded border border-line/80 bg-canvas/80"
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded border border-line/80 bg-canvas/80 overflow-hidden"
           style={{ color: accent }}
           title={category.label}
         >
-          <CatIcon size={14} weight="bold" />
+          {skill.has_preview && skill.preview_url ? (
+            <img
+              src={skill.preview_url}
+              alt=""
+              className="size-7 object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <CatIcon size={14} weight="bold" />
+          )}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

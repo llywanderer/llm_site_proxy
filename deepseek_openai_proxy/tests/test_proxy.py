@@ -14,7 +14,6 @@ from app import (
     extract_session_id,
     resolve_deep_thinking,
     resolve_new_chat,
-    resolve_web_mode,
 )
 import app as app_module
 
@@ -40,7 +39,6 @@ class FakeBrowserBackend:
     def __init__(self, *, new_chat_per_request: bool = True):
         self.payloads = []
         self.new_chat_flags = []
-        self.web_modes = []
         self.deep_thinking_flags = []
         self.new_chat_per_request = new_chat_per_request
 
@@ -50,12 +48,11 @@ class FakeBrowserBackend:
         *,
         new_chat=None,
         session_id=None,
-        web_mode=None,
         deep_thinking=None,
+        **_ignored,
     ):
         self.payloads.append(payload)
         self.new_chat_flags.append(new_chat)
-        self.web_modes.append(web_mode)
         self.deep_thinking_flags.append(deep_thinking)
         return "browser pong"
 
@@ -259,14 +256,6 @@ def test_resolve_new_chat_priority():
     assert resolve_new_chat({}, default=True) is True
 
 
-def test_resolve_web_mode_priority_and_aliases():
-    assert resolve_web_mode({"deepseek_mode": "expert"}, default="fast") == "expert"
-    assert resolve_web_mode({"metadata": {"deepseek_mode": "vision"}}, default="fast") == "vision"
-    assert resolve_web_mode({}, header="quick", default="expert") == "fast"
-    assert resolve_web_mode({}, header="识图模式", default="fast") == "vision"
-    assert resolve_web_mode({}, default="fast") == "fast"
-
-
 def test_resolve_deep_thinking_priority():
     assert resolve_deep_thinking({"deep_thinking": True}, default=False) is True
     assert resolve_deep_thinking({"metadata": {"deep_thinking": False}}, default=True) is False
@@ -275,7 +264,7 @@ def test_resolve_deep_thinking_priority():
 
 
 @pytest.mark.anyio
-async def test_browser_backend_receives_mode_and_deep_thinking_controls():
+async def test_browser_backend_receives_deep_thinking_and_ignores_legacy_mode():
     browser_backend = FakeBrowserBackend()
     app = create_app(
         local_api_key="local-secret",
@@ -297,7 +286,6 @@ async def test_browser_backend_receives_mode_and_deep_thinking_controls():
         )
 
     assert response.status_code == 200
-    assert browser_backend.web_modes == ["expert"]
     assert browser_backend.deep_thinking_flags == [True]
 
 

@@ -93,6 +93,13 @@ export type SkillItem = {
   purposes?: string[];
   tags?: SkillTag[];
   tag_ids?: string[];
+  is_image_style?: boolean;
+  is_image_style_source?: "meta" | "auto";
+  /** null = 无覆盖，走自动推断 */
+  is_image_style_override?: boolean | null;
+  has_preview?: boolean;
+  preview_status?: string | null;
+  preview_url?: string | null;
 };
 
 /** 把 Bridge / FastAPI 错误体收成一行可读文案（对齐其它页面的短错误风格）。 */
@@ -283,6 +290,8 @@ export const api = {
       clear_category?: boolean;
       description_zh?: string;
       clear_description_zh?: boolean;
+      is_image_style?: boolean;
+      clear_is_image_style?: boolean;
     },
   ) =>
     json<SkillItem>(`/api/skills/${encodeURIComponent(name)}/meta`, {

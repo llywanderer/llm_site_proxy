@@ -108,6 +108,28 @@ async def list_skills() -> dict[str, Any]:
         }
 
 
+async def get_skill_preview(name: str) -> tuple[int, Any, str | None]:
+    """返回 (status, body_bytes|error_payload, media_type)。"""
+    from urllib.parse import quote
+
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        return 400, {"detail": "name required"}, None
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{BRIDGE_URL}/v1/skills/{quote(cleaned, safe='')}/preview",
+            headers=_headers(),
+        )
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+            except Exception:  # noqa: BLE001
+                payload = {"detail": resp.text}
+            return resp.status_code, payload, None
+        media = (resp.headers.get("content-type") or "image/png").split(";")[0].strip()
+        return resp.status_code, resp.content, media or "image/png"
+
+
 def _fallback_skills() -> list[dict[str, Any]]:
     return [
         {

@@ -291,6 +291,11 @@ def _skill_meta(
     except ImportError:
         from .skill_taxonomy import enrich_skill_item  # type: ignore
     item = enrich_skill_item(item, frontmatter=parsed)
+    try:
+        from skill_preview import attach_preview_fields
+    except ImportError:
+        from .skill_preview import attach_preview_fields  # type: ignore
+    attach_preview_fields(item, skill_dir=skill_dir)
     if include_assets:
         item["assets"] = list_skill_text_assets(skill_dir)
     return item
@@ -309,16 +314,20 @@ def list_skills(root: Path | None = None) -> list[dict[str, Any]]:
         if not child.is_dir() or child.name.startswith("."):
             continue
         if not (child / "SKILL.md").is_file():
-            items.append(
-                enrich_skill_item(
-                    {
-                        "name": child.name,
-                        "description": "",
-                        "path": str(child.resolve()),
-                        "valid": False,
-                    }
-                )
+            incomplete = enrich_skill_item(
+                {
+                    "name": child.name,
+                    "description": "",
+                    "path": str(child.resolve()),
+                    "valid": False,
+                }
             )
+            try:
+                from skill_preview import attach_preview_fields
+            except ImportError:
+                from .skill_preview import attach_preview_fields  # type: ignore
+            attach_preview_fields(incomplete, skill_dir=child)
+            items.append(incomplete)
             continue
         items.append(_skill_meta(child))
     return items
@@ -1225,19 +1234,30 @@ def delete_skill(name: str, root: Path | None = None) -> bool:
         raise SkillStoreError(f"skill 不存在: {n}", status_code=404)
     shutil.rmtree(target)
     try:
-        from skill_meta_store import clear_description_zh, set_inferred_category
+        from skill_meta_store import (
+            clear_description_zh,
+            clear_is_image_style_override,
+            set_inferred_category,
+        )
     except ImportError:
         try:
             from .skill_meta_store import (  # type: ignore
                 clear_description_zh,
+                clear_is_image_style_override,
                 set_inferred_category,
             )
         except ImportError:
             clear_description_zh = None  # type: ignore
+            clear_is_image_style_override = None  # type: ignore
             set_inferred_category = None  # type: ignore
     if clear_description_zh is not None:
         try:
             clear_description_zh(n)
+        except Exception:  # noqa: BLE001
+            pass
+    if clear_is_image_style_override is not None:
+        try:
+            clear_is_image_style_override(n)
         except Exception:  # noqa: BLE001
             pass
     if set_inferred_category is not None:

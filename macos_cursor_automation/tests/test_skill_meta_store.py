@@ -79,6 +79,37 @@ class SkillMetaStoreTests(unittest.TestCase):
             clear_description_zh("remotion-markup")
             self.assertIsNone(get_description_zh("remotion-markup"))
 
+    def test_is_image_style_override_roundtrip(self) -> None:
+        from skill_meta_store import (
+            get_is_image_style_override,
+            patch_skill_meta,
+            set_is_image_style_override,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            skills = Path(td) / "skills"
+            skills.mkdir()
+            os.environ["CURSOR_SKILLS_DIR"] = str(skills)
+            os.environ.pop("CURSOR_SKILLS_META_PATH", None)
+
+            self.assertIsNone(get_is_image_style_override("handdraw-style-prompter"))
+            self.assertTrue(
+                set_is_image_style_override("handdraw-style-prompter", True)
+            )
+            self.assertTrue(get_is_image_style_override("handdraw-style-prompter"))
+            patch_skill_meta("handdraw-style-prompter", is_image_style=False)
+            self.assertFalse(get_is_image_style_override("handdraw-style-prompter"))
+            patch_skill_meta("handdraw-style-prompter", clear_is_image_style=True)
+            self.assertIsNone(get_is_image_style_override("handdraw-style-prompter"))
+            # clear 优先于同请求里的 is_image_style
+            set_is_image_style_override("handdraw-style-prompter", True)
+            patch_skill_meta(
+                "handdraw-style-prompter",
+                is_image_style=False,
+                clear_is_image_style=True,
+            )
+            self.assertIsNone(get_is_image_style_override("handdraw-style-prompter"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,17 +74,6 @@ def _bool_field(
 
 DEEPSEEK_UI_SCHEMA: dict[str, Any] = {
     "fields": [
-        _select_field(
-            key="deepseek_web_mode",
-            request_key="deepseek_mode",
-            label="网页模式",
-            options=[
-                {"value": "fast", "label": "快速模式"},
-                {"value": "expert", "label": "专家模式"},
-                {"value": "vision", "label": "识图模式"},
-            ],
-            default="fast",
-        ),
         _bool_field(
             key="deepseek_deep_thinking",
             request_key="deep_thinking",

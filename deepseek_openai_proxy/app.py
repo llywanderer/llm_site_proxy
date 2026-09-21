@@ -195,32 +195,36 @@ def _parse_bool(value: object) -> bool | None:
 
 
 def _parse_web_mode(value: object) -> str | None:
+    """Legacy parser kept only to detect ignored client fields.
+
+    DeepSeek web UI no longer exposes 快速/专家/识图 modes.
+    """
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError(f"invalid DeepSeek web mode: {value!r}")
+        return None
     normalized = value.strip().lower()
     if normalized in {"", "default"}:
         return None
-    aliases = {
-        "fast": "fast",
-        "quick": "fast",
-        "normal": "fast",
-        "快速": "fast",
-        "快速模式": "fast",
-        "expert": "expert",
-        "pro": "expert",
-        "专家": "expert",
-        "专家模式": "expert",
-        "vision": "vision",
-        "image": "vision",
-        "image-understanding": "vision",
-        "识图": "vision",
-        "识图模式": "vision",
-    }
-    if normalized in aliases:
-        return aliases[normalized]
-    raise ValueError(f"invalid DeepSeek web mode: {value!r}")
+    return normalized or None
+
+
+def _legacy_web_mode_hint(
+    payload: dict[str, Any],
+    *,
+    header: str | None = None,
+) -> str | None:
+    """Return a legacy deepseek_mode value if the client still sent one."""
+    if "deepseek_mode" in payload:
+        return _parse_web_mode(payload["deepseek_mode"])
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and "deepseek_mode" in metadata:
+        return _parse_web_mode(metadata["deepseek_mode"])
+
+    if header is not None:
+        return _parse_web_mode(header)
+    return None
 
 
 def resolve_new_chat(
@@ -254,40 +258,6 @@ def resolve_new_chat(
             return parsed
 
     return default
-
-
-def resolve_web_mode(
-    payload: dict[str, Any],
-    *,
-    header: str | None = None,
-    default: str = "fast",
-) -> str:
-    """Resolve the DeepSeek web chat mode for browser mode.
-
-    Priority mirrors ``new_chat``:
-    1. Request body ``deepseek_mode``
-    2. Request body ``metadata.deepseek_mode``
-    3. HTTP header ``X-DeepSeek-Mode``
-    4. Environment/backend default
-    """
-    if "deepseek_mode" in payload:
-        parsed = _parse_web_mode(payload["deepseek_mode"])
-        if parsed is not None:
-            return parsed
-
-    metadata = payload.get("metadata")
-    if isinstance(metadata, dict) and "deepseek_mode" in metadata:
-        parsed = _parse_web_mode(metadata["deepseek_mode"])
-        if parsed is not None:
-            return parsed
-
-    if header is not None:
-        parsed = _parse_web_mode(header)
-        if parsed is not None:
-            return parsed
-
-    parsed_default = _parse_web_mode(default)
-    return parsed_default or "fast"
 
 
 def resolve_deep_thinking(
@@ -503,11 +473,12 @@ def create_app(
                 header=x_deepseek_new_chat,
                 default=browser_backend.new_chat_per_request,
             )
-            web_mode = resolve_web_mode(
-                payload,
-                header=x_deepseek_mode,
-                default=getattr(browser_backend, "default_web_mode", "fast"),
-            )
+            legacy_mode = _legacy_web_mode_hint(payload, header=x_deepseek_mode)
+            if legacy_mode:
+                logger.info(
+                    "chat.ignore_legacy_deepseek_mode=%s reason=ui_removed_fast_expert_vision",
+                    legacy_mode,
+                )
             deep_thinking = resolve_deep_thinking(
                 payload,
                 header=x_deepseek_deep_thinking,
@@ -519,20 +490,18 @@ def create_app(
             except ImportError:
                 from console_ingest import extract_client_source
 
-            client = extract_client_source(headers=request.headers, request_obj=payload)
+            client_source = extract_client_source(headers=request.headers, request_obj=payload)
             logger.info(
-                "chat.new_chat=%s session_id=%s web_mode=%s deep_thinking=%s client_platform=%s",
+                "chat.new_chat=%s session_id=%s deep_thinking=%s client_platform=%s",
                 new_chat,
                 session_id or "-",
-                web_mode,
                 deep_thinking,
-                client.get("platform") or "-",
+                client_source.get("platform") or "-",
             )
             answer = await browser_backend.chat_completion(
                 payload,
                 new_chat=new_chat,
                 session_id=session_id,
-                web_mode=web_mode,
                 deep_thinking=deep_thinking,
             )
             model = str(payload.get("model") or "deepseek-chat-web")

@@ -24,14 +24,14 @@ _DEFAULT_CATEGORIES: tuple[dict[str, Any], ...] = (
     {
         "id": "perspective",
         "label": "思维视角",
-        "hint": "名人/专家框架，写稿与决策时套用视角",
+        "hint": "名人/专家框架，写稿与决策时套用视角（仅生文，不进生图）",
         "accent": "#8b9cff",
         "purposes": ["text"],
     },
     {
         "id": "content",
         "label": "内容创作",
-        "hint": "配图、漫画、封面、信息图、幻灯片",
+        "hint": "配图、漫画、封面、信息图、幻灯片（仅生图栏）",
         "accent": "#2bb8c8",
         "purposes": ["image"],
     },
@@ -73,7 +73,7 @@ _DEFAULT_CATEGORIES: tuple[dict[str, Any], ...] = (
     {
         "id": "motion",
         "label": "成片运动",
-        "hint": "Remotion 镜头节奏、转场与成片结构；与生文/生图叠加",
+        "hint": "Remotion 镜头节奏、转场与成片结构（仅成片栏，不进生图/生文）",
         "accent": "#c45c4a",
         "purposes": ["motion"],
     },
@@ -89,14 +89,14 @@ _DEFAULT_CATEGORIES: tuple[dict[str, Any], ...] = (
         "label": "游戏与引擎",
         "hint": "Unity / Unreal / Godot、技术美术、游戏音频、XR",
         "accent": "#c47a2b",
-        "purposes": ["text", "image"],
+        "purposes": ["text"],
     },
     {
         "id": "other",
         "label": "其它",
         "hint": "尚未归类",
         "accent": "#5a6570",
-        "purposes": ["text", "image"],
+        "purposes": ["text"],
     },
 )
 
@@ -177,6 +177,8 @@ _DEFAULT_BY_NAME: dict[str, str] = {
     "remotion-studio": "motion",
     "remotion-docs": "motion",
     "remotion-create": "motion",
+    "remotion-saas": "motion",
+    "remotion-upgrade": "motion",
 }
 
 _CAT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -385,10 +387,27 @@ def categorize_skill(
         if source == "fallback":
             source = "default:other"
 
+    # 最终护栏：人物视角 / Remotion 不可被误分进 content（生图）
+    if n == "booktok-remotion" or n.startswith("remotion-"):
+        if "motion" in known and cid != "motion":
+            cid = "motion"
+            source = f"guard:remotion(was:{source})"
+    elif n.endswith("-perspective") or "-perspective" in n:
+        if "perspective" in known and cid != "perspective":
+            cid = "perspective"
+            source = f"guard:perspective(was:{source})"
+
     meta = next((c for c in cats if c["id"] == cid), cats[-1])
     display = _display_name(n or name)
     family = _family_label(n or name)
-    purposes = list(meta.get("purposes") or ["text", "image"])
+    purposes = list(meta.get("purposes") or ["text"])
+    # 护栏类目强制 purposes，避免覆盖表把 motion 配成 image
+    if cid == "motion":
+        purposes = ["motion"]
+    elif cid == "perspective":
+        purposes = ["text"]
+    elif cid in ("content", "generation"):
+        purposes = ["image"]
     return {
         "category": meta["id"],
         "category_label": meta["label"],

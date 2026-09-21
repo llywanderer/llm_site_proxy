@@ -254,60 +254,48 @@ async def test_chat_completion_payload_new_chat_overrides_env_default():
 
 
 @pytest.mark.anyio
-async def test_apply_chat_options_selects_requested_mode_and_deep_thinking():
+async def test_apply_chat_options_toggles_deep_thinking():
     client = BrowserDeepSeekClient(user_data_dir="/tmp/test-profile")
     page = FakePage(url="https://chat.deepseek.com/")
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
-    expert = FakeLocator()
     deep_thinking = FakeLocator(disabled=False)
-    page._locators['[role="radio"]:has-text("专家模式")'] = expert
     page._locators['[tabindex="0"]:has-text("深度思考")'] = deep_thinking
 
-    await client._apply_chat_options(page, web_mode="expert", deep_thinking=True)
+    await client._apply_chat_options(page, deep_thinking=True)
 
-    assert expert.clicked is True
     assert deep_thinking.clicked is True
 
 
 @pytest.mark.anyio
-async def test_apply_chat_options_skips_already_selected_controls():
+async def test_apply_chat_options_skips_already_selected_deep_thinking():
     client = BrowserDeepSeekClient(user_data_dir="/tmp/test-profile")
     page = FakePage(url="https://chat.deepseek.com/")
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
-    fast = FakeLocator()
-    fast.get_attribute = AsyncMock(side_effect=lambda name: "true" if name == "aria-checked" else None)
     deep_thinking = FakeLocator()
     deep_thinking.get_attribute = AsyncMock(side_effect=lambda name: "true" if name == "aria-pressed" else None)
-    page._locators['[role="radio"]:has-text("快速模式")'] = fast
     page._locators['[tabindex="0"]:has-text("深度思考")'] = deep_thinking
 
-    await client._apply_chat_options(page, web_mode="fast", deep_thinking=True)
+    await client._apply_chat_options(page, deep_thinking=True)
 
-    assert fast.clicked is False
     assert deep_thinking.clicked is False
 
 
 @pytest.mark.anyio
-async def test_apply_chat_options_skips_repeat_clicks_within_session():
+async def test_apply_chat_options_skips_repeat_deep_thinking_clicks_within_session():
     client = BrowserDeepSeekClient(user_data_dir="/tmp/test-profile")
     page = FakePage(url="https://chat.deepseek.com/")
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
-    expert = FakeLocator()
     deep_thinking = FakeLocator(disabled=False)
-    page._locators['[role="radio"]:has-text("专家模式")'] = expert
     page._locators['[tabindex="0"]:has-text("深度思考")'] = deep_thinking
 
-    await client._apply_chat_options(page, web_mode="expert", deep_thinking=True)
-    assert expert.clicked is True
+    await client._apply_chat_options(page, deep_thinking=True)
     assert deep_thinking.clicked is True
 
-    expert.clicked = False
     deep_thinking.clicked = False
-    await client._apply_chat_options(page, web_mode="expert", deep_thinking=True)
-    assert expert.clicked is False
+    await client._apply_chat_options(page, deep_thinking=True)
     assert deep_thinking.clicked is False
 
 
@@ -316,15 +304,15 @@ async def test_click_if_needed_skips_bare_text_without_aria():
     client = BrowserDeepSeekClient(user_data_dir="/tmp/test-profile")
     page = FakePage(url="https://chat.deepseek.com/")
     text_match = FakeLocator()
-    page._locators['text="快速模式"'] = text_match
+    page._locators['text="深度思考"'] = text_match
 
     with pytest.raises(RuntimeError, match="未找到可用"):
         await client._click_if_needed(
             page,
-            ['text="快速模式"'],
-            state_attribute="aria-checked",
+            ['text="深度思考"'],
+            state_attribute="aria-pressed",
             desired=True,
-            option_name="web_mode:fast",
+            option_name="deep_thinking:True",
         )
 
     assert text_match.clicked is False
